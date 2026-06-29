@@ -9,7 +9,7 @@ from app.db.mongo import init_db
 
 @asynccontextmanager
 async def lifespan(_:FastAPI):
-    await init_db();
+    await init_db()
     yield
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
