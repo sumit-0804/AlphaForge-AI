@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     mongodb_uri : str = "mongodb://localhost:27017"
     mongodb_db : str = "alphaforge"
     cors_origin : str ="http://localhost:3000"
+    ollama_base_url: str = "http://localhost:11434"
+    llm_model: str = "llama3.1:8b"
 
     @property
     def cors_origin_list(self) -> list[str]:
