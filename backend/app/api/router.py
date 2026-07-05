@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.routes import health, market, analysis, trading, llm, research, news
+from app.api.routes import health, market, analysis, trading, llm, research, news, scanner
 
 api_router = APIRouter()
 api_router.include_router(health.router)
@@ -10,3 +10,4 @@ api_router.include_router(trading.router)
 api_router.include_router(llm.router)
 api_router.include_router(research.router)
 api_router.include_router(news.router)
+api_router.include_router(scanner.router)
