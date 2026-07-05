@@ -1,4 +1,5 @@
-export const currency = (n: number | null | undefined) => n==null ? "-" : n.toLocaleString("en-US", {style: "currency", currency:"USD"});
+export const currency = (n: number | null | undefined, code: string = "USD") =>
+    n == null ? "-" : n.toLocaleString("en-US", { style: "currency", currency: code });
 
 export const number = (n: number | null | undefined) =>
     n == null ? "-" : n.toLocaleString("en-US")

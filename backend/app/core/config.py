@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     cors_origin : str ="http://localhost:3000"
     ollama_base_url: str = "http://localhost:11434"
     llm_model: str = "llama3.1:8b"
+    news_lang: str = "en"
+    news_country: str = ""
 
     @property
     def cors_origin_list(self) -> list[str]:

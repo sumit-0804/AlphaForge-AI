@@ -3,6 +3,8 @@ from fastapi import HTTPException
 from typing import Dict, Any
 from cachetools import TTLCache, cached
 
+from app.core.exchanges import get_exchange
+
 stock_cache = TTLCache(maxsize=100, ttl=300)
 ohlcv_cache = TTLCache(maxsize=100, ttl=300)
 
@@ -18,6 +20,7 @@ class MarketDataService:
             if not info or ('regularMarketPrice' not in info and 'currentPrice' not in info):
                 raise HTTPException(status_code=404, detail=f"Ticker {ticker} not found")
 
+            ex = get_exchange(ticker)
             return {
                 "symbol": info.get("symbol"),
                  "shortName": info.get("shortName"),
@@ -29,7 +32,13 @@ class MarketDataService:
                 "volume": info.get("volume"),
                 "averageVolume": info.get("averageVolume"),
                 "fiftyTwoWeekHigh": info.get("fiftyTwoWeekHigh"),
-                "fiftyTwoWeekLow": info.get("fiftyTwoWeekLow")
+                "fiftyTwoWeekLow": info.get("fiftyTwoWeekLow"),
+                # Exchange context from the central registry (falls back to
+                # yfinance's own currency when available).
+                "exchange": ex.code or None,
+                "exchangeName": ex.name,
+                "country": ex.country or None,
+                "currency": info.get("currency") or ex.currency or "USD",
             }
         except Exception as e:
             if isinstance(e, HTTPException):

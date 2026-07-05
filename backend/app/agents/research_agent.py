@@ -4,6 +4,7 @@ from fastapi import HTTPException
 from app.services.market_data import MarketDataService
 from app.services.technical_analysis import TechnicalAnalysisService
 from app.services.llm_service import LLMService
+from app.core.exchanges import get_exchange
 
 SYSTEM_PROMPT = (
     "You are AlphaForge Research Agent, an equity research assistant. "
@@ -21,15 +22,22 @@ SYSTEM_PROMPT = (
     "This is educational analysis, not financial advice."
 )
 
+
 class ResearchAgentService:
+    # Phase 7: gathers market + technical (+ optional news) context and asks the
+    # local LLM for a structured research report.
+
     @staticmethod
-    def _build_context(ticker: str, news:list[dict] | None = None ) -> dict:
+    def _build_context(ticker: str, news: list[dict] | None = None) -> dict:
         info = MarketDataService.get_stock_info(ticker)
         indicators = TechnicalAnalysisService.get_technical_indicators(ticker)
+        ex = get_exchange(ticker)
         return {
             "profile": {
                 "symbol": info.get("symbol"),
                 "name": info.get("longName") or info.get("shortName"),
+                "exchange": ex.name,
+                "currency": info.get("currency") or ex.currency or "USD",
                 "sector": info.get("sector"),
                 "industry": info.get("industry"),
                 "currentPrice": info.get("currentPrice"),
@@ -42,6 +50,7 @@ class ResearchAgentService:
             "technical": indicators.get("latest", {}),
             "news": news or [],
         }
+
     @staticmethod
     def _build_messages(ticker: str, context: dict) -> list[dict]:
         prompt = (
@@ -59,20 +68,18 @@ class ResearchAgentService:
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
         ]
-    
+
     @staticmethod
-    def _parse(content:str)-> dict:
+    def _parse(content: str) -> dict:
+        # Local models sometimes wrap JSON in ```fences``` or add stray text.
         text = content.strip()
         if text.startswith("```"):
             text = text.strip("`")
             if text.lower().startswith("json"):
                 text = text[4:]
-        
-        start,end = text.find("{"), text.rfind("}")
-
+        start, end = text.find("{"), text.rfind("}")
         if start != -1 and end != -1:
             text = text[start : end + 1]
-        
         try:
             return json.loads(text)
         except json.JSONDecodeError:
@@ -84,6 +91,7 @@ class ResearchAgentService:
                 "confidence": "LOW",
                 "rationale": "Model returned unstructured output.",
             }
+
     @classmethod
     async def research(cls, ticker: str, news: list[dict] | None = None) -> dict:
         try:

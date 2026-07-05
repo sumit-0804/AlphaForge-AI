@@ -50,6 +50,10 @@ export type StockInfo = {
     averageVolume: number | null;
     fiftyTwoWeekHigh: number | null;
     fiftyTwoWeekLow: number | null;
+    exchange: string | null;
+    exchangeName: string | null;
+    country: string | null;
+    currency: string;
 }
 
 export const fetchStockInfo = (ticker: string) => {

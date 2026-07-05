@@ -78,17 +78,18 @@ export default function MarketPage() {
                                 <p className="text-sm text-muted-foreground">{data.longName ?? data.shortName}</p>
                                 <p className="text-xs text-muted-foreground">
                                     {data.sector} · {data.industry}
+                                    {data.exchange ? ` · ${data.exchange}` : ""}
                                 </p>
                             </div>
-                            <p className="text-2xl font-semibold">{currency(data.currentPrice)}</p>
+                            <p className="text-2xl font-semibold">{currency(data.currentPrice, data.currency)}</p>
                         </div>
 
                         <dl className="mt-5 grid grid-cols-2 gap-4 text-sm sm:grid-cols-3">
                             <Field label="Market Cap" value={compact(data.marketCap)} />
                             <Field label="Volume" value={number(data.volume)} />
                             <Field label="Avg Volume" value={number(data.averageVolume)} />
-                            <Field label="52W High" value={currency(data.fiftyTwoWeekHigh)} />
-                            <Field label="52W Low" value={currency(data.fiftyTwoWeekLow)} />
+                            <Field label="52W High" value={currency(data.fiftyTwoWeekHigh, data.currency)} />
+                            <Field label="52W Low" value={currency(data.fiftyTwoWeekLow, data.currency)} />
                         </dl>
                     </div>
 
@@ -106,7 +107,7 @@ export default function MarketPage() {
                             />
                         </label>
                         <p className="text-sm text-muted-foreground">
-                            Est. cost: {currency((data.currentPrice ?? 0) * qty)}
+                            Est. cost: {currency((data.currentPrice ?? 0) * qty, data.currency)}
                         </p>
                         <div className="grid grid-cols-2 gap-2">
                             <button
@@ -126,7 +127,7 @@ export default function MarketPage() {
                         </div>
                         {trade.isSuccess && (
                             <p className="text-sm text-emerald-600">
-                                {trade.data.action.toUpperCase()} {trade.data.quantity} {trade.data.ticker} @ {currency(trade.data.price)}
+                                {trade.data.action.toUpperCase()} {trade.data.quantity} {trade.data.ticker} @ {currency(trade.data.price, data.currency)}
                             </p>
                         )}
                         {trade.isError && <p className="text-sm text-red-600">{(trade.error as Error).message}</p>}

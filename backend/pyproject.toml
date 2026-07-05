@@ -8,6 +8,7 @@ dependencies = [
     "beanie>=2.1.0",
     "cachetools>=7.1.4",
     "fastapi>=0.139.2",
+    "feedparser>=6.0.12",
     "langchain-ollama>=1.1.0",
     "pandas>=2.3.3",
     "pandas-ta>=0.4.71b0",

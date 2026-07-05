@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from app.agents.reasearch_agent import ResearchAgentService
+from app.agents.research_agent import ResearchAgentService
 
 router= APIRouter(prefix="/research", tags=["Research Agent"])
 
