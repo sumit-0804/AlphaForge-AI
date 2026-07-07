@@ -4,6 +4,7 @@ from fastapi import HTTPException
 from app.services.market_data import MarketDataService
 from app.services.technical_analysis import TechnicalAnalysisService
 from app.services.llm_service import LLMService
+from app.agents.util import _parse
 from app.core.exchanges import get_exchange
 
 SYSTEM_PROMPT = (
@@ -69,29 +70,6 @@ class ResearchAgentService:
             {"role": "user", "content": prompt},
         ]
 
-    @staticmethod
-    def _parse(content: str) -> dict:
-        # Local models sometimes wrap JSON in ```fences``` or add stray text.
-        text = content.strip()
-        if text.startswith("```"):
-            text = text.strip("`")
-            if text.lower().startswith("json"):
-                text = text[4:]
-        start, end = text.find("{"), text.rfind("}")
-        if start != -1 and end != -1:
-            text = text[start : end + 1]
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            return {
-                "summary": content.strip(),
-                "strengths": [],
-                "weaknesses": [],
-                "recommendation": "HOLD",
-                "confidence": "LOW",
-                "rationale": "Model returned unstructured output.",
-            }
-
     @classmethod
     async def research(cls, ticker: str, news: list[dict] | None = None) -> dict:
         try:
@@ -101,7 +79,17 @@ class ResearchAgentService:
             return {
                 "symbol": ticker.upper(),
                 "model": result["model"],
-                "report": cls._parse(result["content"]),
+                "report": _parse(
+                    result["content"],
+                    {
+                        "summary": result["content"].strip(),
+                        "strengths": [],
+                        "weaknesses": [],
+                        "recommendation": "HOLD",
+                        "confidence": "LOW",
+                        "rationale": "Model returned unstructured output.",
+                    },
+                ),
             }
         except HTTPException:
             raise

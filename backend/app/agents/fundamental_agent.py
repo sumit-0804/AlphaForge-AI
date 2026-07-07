@@ -3,6 +3,7 @@ from fastapi import HTTPException
 
 from app.services.fundamentals import FundamentalService
 from app.services.llm_service import LLMService
+from app.agents.util import _parse
 
 SYSTEM_PROMPT = (
     "You are AlphaForge Fundamental Agent. You are given pre-computed financial "
@@ -22,32 +23,6 @@ SYSTEM_PROMPT = (
 )
 
 class FundamentalAgentService:
-    @staticmethod
-    def _parse(content:str) -> dict:
-        text = content.strip()
-        if text.startswith("```"):
-            text =text.strip("`")
-            if text.lower().startswith("json"):
-                text = text[4:]
-        
-        start,end = text.find("{"), text.rfind("}")
-
-        if start != -1 and end != -1:
-            text = text[start: end+1]
-        
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            return {
-                "summary": content.strip(),
-                "revenue_analysis": "",
-                "debt_analysis": "",
-                "cash_flow_analysis": "",
-                "strengths": [],
-                "weaknesses": [],
-                "verdict": "MODERATE",
-            }
-    
     @classmethod
     async def analyze(cls, ticker:str) ->dict:
         try:
@@ -71,7 +46,18 @@ class FundamentalAgentService:
                 "symbol": data["symbol"],
                 "model": result["model"],
                 "fundamentals": data,
-                "analysis": cls._parse(result["content"]),
+                "analysis": _parse(
+                    result["content"],
+                    {
+                        "summary": result["content"].strip(),
+                        "revenue_analysis": "",
+                        "debt_analysis": "",
+                        "cash_flow_analysis": "",
+                        "strengths": [],
+                        "weaknesses": [],
+                        "verdict": "MODERATE",
+                    },
+                ),
             }
         except HTTPException:
             raise

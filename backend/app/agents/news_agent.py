@@ -6,6 +6,7 @@ import feedparser
 from fastapi import HTTPException
 
 from app.services.llm_service import LLMService
+from app.agents.util import _parse
 from app.core.config import settings
 from app.core.exchanges import news_query, news_country
 
@@ -59,26 +60,6 @@ class NewsAgentService:
         # feedparser.parse is blocking I/O — run it off the event loop.
         return await asyncio.to_thread(cls._fetch_rss_sync, ticker.upper(), limit)
 
-    @staticmethod
-    def _parse(content: str) -> dict:
-        text = content.strip()
-        if text.startswith("```"):
-            text = text.strip("`")
-            if text.lower().startswith("json"):
-                text = text[4:]
-        start, end = text.find("{"), text.rfind("}")
-        if start != -1 and end != -1:
-            text = text[start : end + 1]
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            return {
-                "summary": content.strip(),
-                "overall_sentiment": "NEUTRAL",
-                "sentiment_score": 0.0,
-                "highlights": [],
-            }
-
     @classmethod
     async def analyze(cls, ticker: str, limit: int = 10) -> dict:
         try:
@@ -115,7 +96,15 @@ class NewsAgentService:
                 "symbol": ticker.upper(),
                 "model": result["model"],
                 "articles": articles,
-                "analysis": cls._parse(result["content"]),
+                "analysis": _parse(
+                    result["content"],
+                    {
+                        "summary": result["content"].strip(),
+                        "overall_sentiment": "NEUTRAL",
+                        "sentiment_score": 0.0,
+                        "highlights": [],
+                    },
+                ),
             }
         except HTTPException:
             raise

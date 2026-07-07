@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     mongodb_db : str = "alphaforge"
     cors_origin : str ="http://localhost:3000"
     ollama_base_url: str = "http://localhost:11434"
-    llm_model: str = "llama3.1:8b"
+    llm_model: str = "llama3.1:latest"
     news_lang: str = "en"
     news_country: str = ""
 
