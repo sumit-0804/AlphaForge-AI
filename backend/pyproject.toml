@@ -10,6 +10,7 @@ dependencies = [
     "fastapi>=0.139.2",
     "feedparser>=6.0.12",
     "langchain-ollama>=1.1.0",
+    "langgraph>=1.2.9",
     "pandas>=2.3.3",
     "pandas-ta>=0.4.71b0",
     "pydantic-settings>=2.14.2",
