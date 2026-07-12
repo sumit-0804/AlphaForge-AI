@@ -10,6 +10,7 @@ from app.agents.news_agent import NewsAgentService
 from app.agents.debate_agent import DebateAgentService
 from app.services.technical_analysis import TechnicalAnalysisService
 from app.services.fundamentals import FundamentalService
+from app.services.memory import MemoryService
 
 class AnalysisState(TypedDict, total=False):
     ticker: str
@@ -121,6 +122,15 @@ class WorkflowService:
             final = await workflow.ainvoke(
                 {"ticker": ticker.upper(), "include_news": include_news}
             )
+            rec = final.get("recommendation") or {}
+            if rec:
+                await MemoryService.save(
+                    "agent_output",
+                    f"{ticker.upper()} recommendation: {rec.get('action')} "
+                    f"({rec.get('confidence')}) — {rec.get('rationale')}",
+                    ticker=ticker,
+                    metadata={"action": rec.get("action"), "confidence": rec.get("confidence")},
+                )
             return {
                 "symbol": ticker.upper(),
                 "recommendation": final.get("recommendation"),

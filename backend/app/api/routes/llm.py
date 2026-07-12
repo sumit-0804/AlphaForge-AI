@@ -15,7 +15,7 @@ class ChatRequest(BaseModel):
 
 @router.get("/state")
 async def get_state():
-    return {"provider": "ollama", "model": settings.llm_model}
+    return {"provider": "gemini", "model": settings.gemini_model}
 
 
 @router.post("/chat")
