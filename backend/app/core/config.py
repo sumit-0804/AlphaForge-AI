@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     faiss_index_path: str = "data/faiss_memory"
     news_lang: str = "en"
     news_country: str = ""
+    scheduler_enabled: bool = True
+    scheduler_timezone: str = "Asia/Kolkata"   # NSE hours; use e.g. "America/New_York" for US
 
     @property
     def cors_origin_list(self) -> list[str]:

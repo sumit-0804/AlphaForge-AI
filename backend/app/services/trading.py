@@ -1,7 +1,17 @@
+import asyncio
 from fastapi import HTTPException
 from typing import List
 from app.models.trading import Portfolio, Transaction, Position
 from app.services.market_data import MarketDataService
+from app.agents.reflection_agent import ReflectionAgentService
+
+_bg_tasks: set = set()
+async def _safe_reflect(user_id: str, ticker: str, quantity: int, buy_price: float, sell_price: float) -> None:
+    try:
+        await ReflectionAgentService.reflect(ticker, quantity, buy_price, sell_price, user_id)
+    except Exception:
+        pass 
+
 
 class TradingService:
     @staticmethod
@@ -98,6 +108,7 @@ class TradingService:
             if pos_index < 0 or portfolio.positions[pos_index].quantity < quantity:
                 raise HTTPException(status_code=400, detail="Insufficient shares to sell")
             
+            avg_buy_price = portfolio.positions[pos_index].average_buy_price
             portfolio.cash_balance += total_cost
             portfolio.positions[pos_index].quantity -= quantity
 
@@ -115,7 +126,12 @@ class TradingService:
             price=current_price
         )
         await transaction.insert()
-
+        if action == "sell":
+            task = asyncio.create_task(
+                _safe_reflect(user_id, ticker, quantity, avg_buy_price, current_price)
+            )
+            _bg_tasks.add(task)
+            task.add_done_callback(_bg_tasks.discard)
         return transaction
     
     @staticmethod
