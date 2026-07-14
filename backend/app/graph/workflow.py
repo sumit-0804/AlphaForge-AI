@@ -11,6 +11,7 @@ from app.agents.debate_agent import DebateAgentService
 from app.services.technical_analysis import TechnicalAnalysisService
 from app.services.fundamentals import FundamentalService
 from app.services.memory import MemoryService
+from app.models.recommendation import Recommendation
 
 class AnalysisState(TypedDict, total=False):
     ticker: str
@@ -66,26 +67,88 @@ async def debate_node(state: AnalysisState) -> dict:
     except Exception as e:
         return {"errors": [f"debate: {e}"]}
 
+def _technical_reasons(t: dict | None) -> list[str]:
+    # Deterministic, Python-generated read of the latest indicators -> the
+    # "technical reasons" component. No LLM: the numbers speak for themselves.
+    if not t:
+        return []
+    reasons: list[str] = []
+
+    rsi = t.get("rsi")
+    if rsi is not None:
+        if rsi >= 70:
+            reasons.append(f"RSI {rsi} — overbought, pullback risk.")
+        elif rsi <= 30:
+            reasons.append(f"RSI {rsi} — oversold, potential bounce.")
+        else:
+            reasons.append(f"RSI {rsi} — neutral momentum.")
+
+    price, e20, e50 = t.get("price"), t.get("ema_20"), t.get("ema_50")
+    if price and e20 and e50:
+        if price > e20 > e50:
+            reasons.append("Price above EMA20 and EMA50 — bullish trend alignment.")
+        elif price < e20 < e50:
+            reasons.append("Price below EMA20 and EMA50 — bearish trend alignment.")
+        else:
+            reasons.append("Mixed EMA alignment — no clear trend.")
+
+    macd = t.get("macd")
+    if macd is not None:
+        reasons.append(f"MACD {'positive' if macd >= 0 else 'negative'} ({macd}).")
+
+    adx = t.get("adx")
+    if adx is not None:
+        reasons.append(f"ADX {adx} — {'strong trend' if adx >= 25 else 'weak/ranging trend'}.")
+
+    return reasons
+
 async def recommendation_node(state: AnalysisState) -> dict:
     decision = (state.get("debate") or {}).get("decision") or {}
     research = (state.get("research") or {}).get("report") or {}
     fundamental = state.get("fundamental") or {}
+    health = fundamental.get("health") or {}
     news = (state.get("news") or {}).get("analysis") or {}
     debate = state.get("debate") or {}
+    technical = state.get("technical") or {}
+
+    checks = health.get("checks", [])
+    explanation = {
+        # 1. Confidence
+        "confidence": decision.get("confidence", "LOW"),
+        # 2. Technical reasons
+        "technical_reasons": _technical_reasons(technical),
+        # 3. News summary
+        "news_summary": news.get("summary") or "No news analysed.",
+        "news_sentiment": news.get("overall_sentiment", "NEUTRAL"),
+        # 4. Fundamental analysis
+        "fundamental_analysis": {
+            "health_score": health.get("score"),
+            "health_label": health.get("label"),
+            "passed_checks": [c["name"] for c in checks if c.get("passed")],
+            "failed_checks": [c["name"] for c in checks if not c.get("passed")],
+        },
+        # 5. Debate outcome
+        "debate_outcome": {
+            "decision": decision.get("decision", "HOLD"),
+            "rationale": decision.get("rationale"),
+            "bull_case": (debate.get("bull") or {}).get("key_point"),
+            "bear_case": (debate.get("bear") or {}).get("key_point"),
+        },
+        # 6. Evidence (consolidated raw signals)
+        "evidence": {
+            "technical": technical,
+            "fundamental_health": health,
+            "news_sentiment": news.get("overall_sentiment"),
+            "research_view": research.get("recommendation"),
+        },
+    }
 
     recommendation = {
         "symbol": state["ticker"],
         "action": decision.get("decision", "HOLD"),
         "confidence": decision.get("confidence", "LOW"),
         "rationale": decision.get("rationale", "Insufficient data for a confident call."),
-        "evidence": {
-            "technical": state.get("technical"),
-            "fundamental_health": fundamental.get("health"),
-            "news_sentiment": news.get("overall_sentiment"),
-            "research_view": research.get("recommendation"),
-            "bull_case": (debate.get("bull") or {}).get("key_point"),
-            "bear_case": (debate.get("bear") or {}).get("key_point"),
-        },
+        "explanation": explanation,
         "catalysts": decision.get("key_catalysts", []),
         "risks": decision.get("key_risks", []),
     }
@@ -124,6 +187,13 @@ class WorkflowService:
             )
             rec = final.get("recommendation") or {}
             if rec:
+                await Recommendation(
+                    symbol=ticker.upper(),
+                    action=rec.get("action", "HOLD"),
+                    confidence=rec.get("confidence", "LOW"),
+                    rationale=rec.get("rationale"),
+                    explanation=rec.get("explanation", {}),
+                ).insert()
                 await MemoryService.save(
                     "agent_output",
                     f"{ticker.upper()} recommendation: {rec.get('action')} "
@@ -145,3 +215,10 @@ class WorkflowService:
             raise
         except Exception as e:
             raise HTTPException(502, f"Workflow failed: {e}")
+    
+    @staticmethod
+    async def history(ticker: str | None = None, limit: int = 20) -> list[Recommendation]:
+        q = Recommendation.find()
+        if ticker:
+            q = q.find(Recommendation.symbol == ticker.upper())
+        return await q.sort("-created_at").limit(limit).to_list()
