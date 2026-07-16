@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { fetchTransactions } from "@/lib/api";
-import { currency } from "@/lib/format";
+import { currency, dateTime, localTimeZoneLabel } from "@/lib/format";
 
 export default function TransactionsPage() {
   const { data, isLoading, isError, error } = useQuery({
@@ -12,7 +12,12 @@ export default function TransactionsPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-semibold tracking-tight">Transactions</h1>
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Transactions</h1>
+        <p className="text-xs text-muted-foreground">
+          Times shown in {localTimeZoneLabel()}
+        </p>
+      </div>
 
       {isLoading && <p className="text-muted-foreground">Loading…</p>}
       {isError && <p className="text-red-600">{(error as Error).message}</p>}
@@ -41,7 +46,7 @@ export default function TransactionsPage() {
                 data.map((tx, i) => (
                   <tr key={i} className="border-b last:border-0">
                     <td className="px-4 py-3 text-muted-foreground">
-                      {new Date(tx.timestamp).toLocaleString()}
+                      {dateTime(tx.timestamp)}
                     </td>
                     <td className="px-4 py-3 font-medium">{tx.ticker}</td>
                     <td className="px-4 py-3">

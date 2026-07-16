@@ -14,6 +14,12 @@ _INDEX_DIR = Path(settings.faiss_index_path)
 class MemoryService:
     _store: FAISS | None = None
     _embeddings: GoogleGenerativeAIEmbeddings | None =None
+    # _add_to_index is read-modify-write (load -> add -> save_local) with no
+    # atomicity. Reflection, the workflow's persist step and the scheduler all
+    # write concurrently, so without this lock interleaved writes drop entries.
+    # NOTE: this only serialises writes within ONE process — running more than a
+    # single uvicorn worker still races on the index files.
+    _write_lock = asyncio.Lock()
 
     @classmethod
     def _emb(cls) -> GoogleGenerativeAIEmbeddings:
@@ -65,7 +71,8 @@ class MemoryService:
         await entry.insert()
         meta = {"id": str(entry.id), "type": type, "ticker": entry.ticker, "user_id": user_id}
         try:
-            await asyncio.to_thread(cls._add_to_index, content, meta)
+            async with cls._write_lock:
+                await asyncio.to_thread(cls._add_to_index, content, meta)
         except Exception as e:
             # Mongo already holds the durable record; don't fail the write if the
             # embedding call errors — just note it.
@@ -78,6 +85,7 @@ class MemoryService:
         query: str,
         k: int = 5,
         type: str | None = None,
+        ticker: str | None = None,
         user_id: str = "default_user",
     ) -> list[dict]:
         def _do():
@@ -87,7 +95,16 @@ class MemoryService:
             filt = {"user_id": user_id}
             if type:
                 filt["type"] = type
-            hits = store.similarity_search_with_score(query, k=k, filter=filt)
+            if ticker:
+                filt["ticker"] = ticker.upper()
+            # LangChain's FAISS applies `filter` AFTER retrieving fetch_k nearest
+            # neighbours (default 20). Scoped searches — e.g. lessons for one
+            # ticker — would silently return nothing once the store fills up with
+            # unrelated agent_output entries that crowd out the top 20. Widen the
+            # candidate pool so the filter has something to select from.
+            hits = store.similarity_search_with_score(
+                query, k=k, filter=filt, fetch_k=max(k * 20, 200)
+            )
             return [
                 {"content": d.page_content, "score": round(float(s), 4), **d.metadata}
                 for d, s in hits

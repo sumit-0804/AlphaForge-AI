@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 from beanie import Document
 from pydantic import BaseModel, Field
 
+from app.models.utc import utc_serializer
+
 class Position(BaseModel):
     ticker:str
     quantity:int
@@ -23,6 +25,8 @@ class Transaction(Document):
     quantity:int
     price:float
     timestamp:datetime = Field(default_factory=lambda:datetime.now(timezone.utc))
+
+    _ser_timestamp = utc_serializer("timestamp")
 
     class Settings:
         name = "transactions"

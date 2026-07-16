@@ -3,7 +3,12 @@ import json
 from fastapi import HTTPException
 
 from app.services.llm_service import LLMService
-from app.agents.util import _parse
+
+
+def _validate(obj: dict) -> str | None:
+    if not isinstance(obj.get("summary"), str) or not obj["summary"].strip():
+        return "The JSON is missing a non-empty 'summary' string."
+    return None
 
 SYSTEM_PROMPT=(
     "You are AlphaForge Risk Agent. You are given computed portfolio risk metrics "
@@ -32,16 +37,21 @@ class RiskAgentService:
                     ),
                 },
             ]
-            result = await LLMService.chat(messages, temperature=0.3)
-            return _parse(
-                result["content"],
-                {
-                    "summary": result["content"].strip(),
+            # Self-correcting: this now runs inside the unattended daily-report
+            # job, where a silently unstructured fallback would sit in the stored
+            # report unnoticed rather than being caught by a caller.
+            result = await LLMService.chat_json(
+                messages,
+                fallback={
+                    "summary": "Could not produce a structured risk read.",
                     "volatility_comment": "",
                     "concentration_risks": [],
                     "suggestions": [],
                 },
+                temperature=0.3,
+                validate=_validate,
             )
+            return {**result["data"], "valid": result["valid"]}
         except HTTPException:
             raise
         except Exception as e:

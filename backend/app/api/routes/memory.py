@@ -1,30 +1,14 @@
 from fastapi import APIRouter
-from pydantic import BaseModel
 
 from app.services.memory import MemoryService
 
+# Read-only by design. Memory is WRITTEN only by the agents themselves — the
+# reflection agent on a closed trade and the workflow on a completed analysis.
+# The old POST /memory endpoint let any caller inject arbitrary "lessons" that
+# `_recall_memory` then fed straight into the moderator's prompt on later runs,
+# which made it a prompt-injection path into the decision loop. This endpoint
+# exists to inspect what the system has learned, not to author it.
 router = APIRouter(prefix="/memory", tags=["Memory"])
-
-
-class MemoryRequest(BaseModel):
-    type: str 
-    content: str
-    ticker: str | None = None
-    metadata: dict | None = None
-    user_id: str = "default_user"
-
-
-@router.post("/")
-async def save_memory(req: MemoryRequest):
-    entry = await MemoryService.save(
-        req.type, req.content, req.ticker, req.metadata, req.user_id
-    )
-    return {"id": str(entry.id), "type": entry.type, "ticker": entry.ticker, "created_at": entry.created_at}
-
-
-@router.get("/search")
-async def search_memory(q: str, k: int = 5, type: str | None = None, user_id: str = "default_user"):
-    return await MemoryService.search(q, k=k, type=type, user_id=user_id)
 
 
 @router.get("/recent")

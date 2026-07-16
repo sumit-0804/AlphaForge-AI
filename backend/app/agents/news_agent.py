@@ -6,7 +6,6 @@ import feedparser
 from fastapi import HTTPException
 
 from app.services.llm_service import LLMService
-from app.agents.util import _parse
 from app.core.config import settings
 from app.core.exchanges import news_query, news_country
 
@@ -91,20 +90,21 @@ class NewsAgentService:
                     ),
                 },
             ]
-            result = await LLMService.chat(messages, temperature=0.3)
+            result = await LLMService.chat_json(
+                messages,
+                fallback={
+                    "summary": "Could not parse a structured news analysis.",
+                    "overall_sentiment": "NEUTRAL",
+                    "sentiment_score": 0.0,
+                    "highlights": [],
+                },
+                temperature=0.3,
+            )
             return {
                 "symbol": ticker.upper(),
                 "model": result["model"],
                 "articles": articles,
-                "analysis": _parse(
-                    result["content"],
-                    {
-                        "summary": result["content"].strip(),
-                        "overall_sentiment": "NEUTRAL",
-                        "sentiment_score": 0.0,
-                        "highlights": [],
-                    },
-                ),
+                "analysis": result["data"],
             }
         except HTTPException:
             raise

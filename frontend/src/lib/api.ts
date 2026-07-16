@@ -60,6 +60,16 @@ export const fetchStockInfo = (ticker: string) => {
     return getJSON<StockInfo>(`/market/info/${ticker.toUpperCase()}`);
 }
 
+export type SymbolResult = {
+    symbol: string;
+    name: string;
+    exchange: string | null;
+    type: string | null;
+};
+
+export const searchSymbols = (query: string, limit = 10) =>
+    getJSON<SymbolResult[]>(`/market/search?q=${encodeURIComponent(query)}&limit=${limit}`);
+
 export type Candle = {
     time: string;
     open: number;
@@ -69,11 +79,10 @@ export type Candle = {
     volume: number;
 }
 
-export const fetchHistory = (ticker: string, period="1mo", interval="1d")=>{
-    client.get<Candle[]>(`/market/history/${ticker.toUpperCase()}`, {
-        params: {period, interval}
-    }). then((res)=> res.data);
-}
+export const fetchHistory = (ticker: string, period = "1mo", interval = "1d") =>
+    client
+        .get<Candle[]>(`/market/history/${ticker.toUpperCase()}`, { params: { period, interval } })
+        .then((res) => res.data);
 
 export type PositionSummary = {
     ticker:string;
@@ -96,6 +105,90 @@ export const fetchPortfolio = () =>{
     return getJSON<PortfolioSummary>("/trading/portfolio");
 }
 
+/* ---- SCANNER ---- */
+
+export type MarketKey = "IN" | "US";
+
+export type MarketSession = {
+    market: MarketKey;
+    label: string;
+    timezone: string;
+    local_time: string;
+    opens: string;
+    closes: string;
+    is_open: boolean;
+};
+
+/** Universe selector accepted by the scanner. */
+export type UniverseKey = "ALL" | "IN" | "NSE" | "BSE" | "US";
+
+export type ScanCandidate = {
+    symbol: string;
+    market: MarketKey;
+    currency: string;
+    signals: string[];
+    score: number;
+    price: number | null;
+    rsi: number | null;
+    ema_20: number | null;
+    ema_50: number | null;
+    volume: number | null;
+    volume_ratio: number | null;
+};
+
+export type TriageEntry = {
+    symbol: string;
+    rank: number;
+    conviction: "HIGH" | "MEDIUM" | "LOW";
+    thesis: string;
+    invalidation: string;
+    worth_deep_analysis: boolean;
+};
+
+export type ScanResult = {
+    scanned: number;
+    matched: number;
+    market: string;
+    sessions: Record<MarketKey, MarketSession>;
+    candidates: ScanCandidate[];
+    triage?: { ranked: TriageEntry[]; summary: string; valid: boolean };
+};
+
+export const fetchScan = (limit = 10, triage = true, market: UniverseKey = "ALL") =>
+    getJSON<ScanResult>(`/scanner/?limit=${limit}&triage=${triage}&market=${market}`);
+
+/* ---- PORTFOLIO ADVISOR ---- */
+
+export type AdvisorPosition = {
+    ticker: string;
+    quantity: number;
+    avg_buy_price: number;
+    current_price: number;
+    pnl: number;
+    pnl_percent: number;
+    weight_pct: number;
+    bearish_signals: string[];
+    bearish_score: number;
+};
+
+export type AdvisorSuggestion = {
+    ticker: string;
+    action: "HOLD" | "SELL" | "TRIM" | "ADD";
+    urgency: "HIGH" | "MEDIUM" | "LOW";
+    rationale: string;
+    suggested_quantity: number;
+};
+
+export type AdvisorResult = {
+    positions: AdvisorPosition[];
+    suggestions: AdvisorSuggestion[];
+    portfolio_summary: string;
+    valid: boolean;
+};
+
+export const fetchAdvisorSuggestions = () =>
+    getJSON<AdvisorResult>("/advisor/suggestions");
+
 export type Transaction = {
     ticker: string;
     action: "buy" | "sell";
@@ -116,4 +209,266 @@ export type TradeRequest ={
 
 export const executeTrade = (trade: TradeRequest)=>{
     return postJSON<Transaction>("/trading/execute", trade);
+}
+
+/* ---- WORKFLOW / EXPLAINABLE RECOMMENDATION (Phase 12 / 18) ---- */
+
+export type TechnicalLatest = {
+    price: number | null;
+    rsi: number | null;
+    ema_20: number | null;
+    ema_50: number | null;
+    macd: number | null;
+    adx: number | null;
+};
+
+export type RecommendationExplanation = {
+    confidence: string;
+    technical_reasons: string[];
+    news_summary: string;
+    news_sentiment: string;
+    fundamental_analysis: {
+        health_score: number | null;
+        health_label: string | null;
+        passed_checks: string[];
+        failed_checks: string[];
+    };
+    debate_outcome: {
+        decision: string;
+        rationale: string | null;
+        bull_case: string | null;
+        bear_case: string | null;
+        rounds?: number | null;
+        converged?: boolean | null;
+    };
+    evidence: Record<string, unknown>;
+    learned_context?: {
+        prior_lessons: string[];
+        past_recommendations: PastRecommendation[];
+    };
+    routing?: {
+        path: "debate" | "quick_decision";
+        signal_votes: Record<string, number>;
+        independent_votes?: Record<string, number>;
+        unanimous: boolean;
+        research_dissent?: boolean;
+    };
+};
+
+export type PastRecommendation = {
+    action: string;
+    confidence: string;
+    rationale: string | null;
+    at: string;
+};
+
+export type Recommendation = {
+    symbol: string;
+    action: string;               // BUY | HOLD | SELL
+    confidence: string;           // LOW | MEDIUM | HIGH
+    rationale: string | null;
+    explanation: RecommendationExplanation;
+    catalysts: string[];
+    risks: string[];
+};
+
+export type StoredRecommendation = {
+    id?: string;
+    symbol: string;
+    action: string;
+    confidence: string;
+    rationale: string | null;
+    explanation: RecommendationExplanation;
+    created_at: string;
+};
+
+export const fetchRecommendationHistory = (ticker?: string, limit = 20) =>
+    getJSON<StoredRecommendation[]>(
+        `/workflow/history?limit=${limit}${ticker ? `&ticker=${ticker.toUpperCase()}` : ""}`
+    );
+
+/* ---- SCHEDULER (Phase 17) ---- */
+
+export type SchedulerJob = { id: string; next_run: string | null };
+
+export type SchedulerStatus = {
+    running: boolean;
+    timezone: string;
+    sessions: Record<MarketKey, MarketSession>;
+    last_runs: Record<string, Record<string, unknown>>;
+};
+
+export const fetchSchedulerJobs = () => getJSON<SchedulerJob[]>("/scheduler/jobs");
+export const fetchSchedulerStatus = () => getJSON<SchedulerStatus>("/scheduler/status");
+export const runSchedulerJob = (jobId: string) =>
+    postJSON<Record<string, unknown>>(`/scheduler/run/${jobId}`, {});
+
+/* ---- MEMORY (Phase 15) ---- */
+
+export type MemoryEntry = {
+    id?: string;
+    type: string;
+    ticker: string | null;
+    content: string;
+    metadata?: Record<string, unknown>;
+    created_at: string;
+};
+
+export const fetchRecentMemory = (type?: string, limit = 20) =>
+    getJSON<MemoryEntry[]>(`/memory/recent?limit=${limit}${type ? `&type=${type}` : ""}`);
+
+/* ---- CRITICS COMMITTEE — STREAMING DEBATE ---- */
+
+// A single analyst's argument at one point in the debate.
+export type DebateArgument = {
+    stance: "BULL" | "BEAR";
+    arguments?: string[];
+    rebuttals?: string[];
+    key_point?: string;
+    has_new_points?: boolean;
+    concede?: boolean;
+};
+
+export type DebateDecision = {
+    decision: string;                 // BUY | HOLD | SELL
+    confidence: string;               // LOW | MEDIUM | HIGH
+    rationale: string | null;
+    bull_summary?: string;
+    bear_summary?: string;
+    key_catalysts?: string[];
+    key_risks?: string[];
+};
+
+export type DebateMemory = {
+    prior_lessons: string[];
+    past_recommendations: PastRecommendation[];
+};
+
+// The events streamed by GET /debate/{ticker}/stream (Server-Sent Events).
+export type DebateEvent =
+    | { type: "status"; phase: string; message: string }
+    | { type: "memory"; memory: DebateMemory }
+    | { type: "opening"; round: number; bull: DebateArgument; bear: DebateArgument }
+    | { type: "rebuttal"; round: number; bull: DebateArgument; bear: DebateArgument; converged: boolean }
+    | { type: "decision"; model: string | null; decision: DebateDecision }
+    | { type: "done"; symbol: string }
+    | { type: "error"; message: string };
+
+/**
+ * Consume a Server-Sent Events endpoint, calling `onEvent` for every parsed
+ * `data:` payload. Returns when the stream ends; pass an AbortSignal to cancel.
+ */
+async function consumeSSE<T>(
+    path: string,
+    onEvent: (ev: T) => void,
+    signal?: AbortSignal
+): Promise<void> {
+    const res = await fetch(`${API_URL}/api${path}`, {
+        headers: { Accept: "text/event-stream" },
+        signal,
+    });
+    if (!res.ok || !res.body) {
+        throw new Error(`Stream failed: ${res.status}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    // SSE wire format: events separated by a blank line, payload on `data:` lines.
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        let sep: number;
+        while ((sep = buffer.indexOf("\n\n")) !== -1) {
+            const chunk = buffer.slice(0, sep);
+            buffer = buffer.slice(sep + 2);
+            const data = chunk
+                .split("\n")
+                .filter((l) => l.startsWith("data:"))
+                .map((l) => l.slice(5).trim())
+                .join("");
+            if (!data) continue;
+            try {
+                onEvent(JSON.parse(data) as T);
+            } catch {
+                // ignore malformed keep-alive/comment lines
+            }
+        }
+    }
+}
+
+/**
+ * Stream a live Bull-vs-Bear committee debate over Server-Sent Events.
+ * Calls `onEvent` for every phase as it arrives.
+ */
+export function streamDebate(
+    ticker: string,
+    opts: { news?: boolean; rounds?: number },
+    onEvent: (ev: DebateEvent) => void,
+    signal?: AbortSignal
+): Promise<void> {
+    const params = new URLSearchParams({
+        news: String(opts.news ?? false),
+        rounds: String(opts.rounds ?? 2),
+    });
+    return consumeSSE<DebateEvent>(
+        `/debate/${ticker.toUpperCase()}/stream?${params}`,
+        onEvent,
+        signal
+    );
+}
+
+/* ---- STREAMING WORKFLOW (live analysis pipeline) ---- */
+
+export type WorkflowNode = "research" | "technical" | "fundamental" | "news";
+
+export type Consensus = {
+    votes: Record<string, number>;
+    // Votes excluding the research agent, whose view is derived from the same
+    // technical/fundamental/news evidence and so cannot count as a peer signal.
+    independent_votes: Record<string, number>;
+    score: number;
+    // Count of INDEPENDENT directional signals (research excluded).
+    signals: number;
+    unanimous: boolean;
+    // True when the independent signals agreed but the research agent disagreed,
+    // which forces the committee debate despite the unanimity.
+    research_dissent: boolean;
+    route: "quick" | "debate";
+    action: string | null;
+    confidence: string | null;
+};
+
+// The events streamed by GET /workflow/{ticker}/stream.
+export type WorkflowEvent =
+    | { type: "status"; message: string }
+    | { type: "node"; node: WorkflowNode; status: "running" | "done" | "error"; data?: Record<string, unknown>; error?: string[] }
+    | { type: "routing"; consensus: Consensus }
+    | { type: "quick_decision"; decision: DebateDecision; memory: DebateMemory }
+    | { type: "debate_start" }
+    | { type: "debate"; event: DebateEvent }
+    | { type: "recommendation"; recommendation: Recommendation }
+    | { type: "warn"; message: string }
+    | { type: "done"; symbol: string; errors?: string[] }
+    | { type: "error"; message: string };
+
+/** Stream the full analysis pipeline (data-gathering → routing → debate → recommendation). */
+export function streamWorkflow(
+    ticker: string,
+    opts: { news?: boolean; rounds?: number },
+    onEvent: (ev: WorkflowEvent) => void,
+    signal?: AbortSignal
+): Promise<void> {
+    const params = new URLSearchParams({
+        news: String(opts.news ?? false),
+        rounds: String(opts.rounds ?? 2),
+    });
+    return consumeSSE<WorkflowEvent>(
+        `/workflow/${ticker.toUpperCase()}/stream?${params}`,
+        onEvent,
+        signal
+    );
 }

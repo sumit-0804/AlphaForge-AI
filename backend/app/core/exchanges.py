@@ -1,11 +1,13 @@
 from dataclasses import dataclass
+from datetime import datetime, time
+from zoneinfo import ZoneInfo
 
 
 @dataclass(frozen=True)
 class Exchange:
-    code: str       
-    name: str     
-    country: str    
+    code: str
+    name: str
+    country: str
     currency: str
 
 
@@ -65,3 +67,56 @@ def news_query(ticker: str) -> str:
 def news_country(ticker: str) -> str:
     # Country code for the Google News edition; "" when unknown.
     return get_exchange(ticker).country
+
+
+# --- Market sessions -------------------------------------------------------
+# Local trading hours per market, in the market's OWN timezone. Storing them
+# this way (rather than as fixed IST offsets) means DST is handled for us: the
+# US session shifts against IST twice a year, and ZoneInfo tracks that. A user
+# in Kolkata sees the US open at 19:00 IST in summer and 20:00 in winter without
+# any of these numbers changing.
+
+@dataclass(frozen=True)
+class Market:
+    key: str
+    label: str
+    timezone: str
+    open: time
+    close: time
+    # Weekday indices the market trades on (Mon=0). Both markets are Mon-Fri.
+    weekdays: tuple[int, ...] = (0, 1, 2, 3, 4)
+
+
+MARKETS: dict[str, Market] = {
+    "IN": Market("IN", "NSE / BSE", "Asia/Kolkata", time(9, 15), time(15, 30)),
+    "US": Market("US", "NASDAQ / NYSE", "America/New_York", time(9, 30), time(16, 0)),
+}
+
+
+def market_for_ticker(ticker: str) -> str:
+    # ".NS"/".BO" -> IN, bare tickers -> US. Anything else falls back to US
+    # since that is the default yfinance namespace.
+    _, suffix = split_ticker(ticker)
+    return "IN" if suffix in ("NS", "BO") else "US"
+
+
+def market_status(key: str, now: datetime | None = None) -> dict:
+    """Whether a market is currently open, plus its local time.
+
+    Note this covers regular weekday sessions only — it does not know about
+    exchange holidays, so a holiday will still report "open" during session
+    hours. Treat it as a scheduling hint, not a trading calendar.
+    """
+    m = MARKETS[key]
+    tz = ZoneInfo(m.timezone)
+    local = (now or datetime.now(tz)).astimezone(tz)
+    is_open = local.weekday() in m.weekdays and m.open <= local.time() <= m.close
+    return {
+        "market": m.key,
+        "label": m.label,
+        "timezone": m.timezone,
+        "local_time": local.isoformat(),
+        "opens": m.open.strftime("%H:%M"),
+        "closes": m.close.strftime("%H:%M"),
+        "is_open": is_open,
+    }

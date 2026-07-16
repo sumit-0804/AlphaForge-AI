@@ -7,6 +7,7 @@ from app.core.exchanges import get_exchange
 
 stock_cache = TTLCache(maxsize=100, ttl=300)
 ohlcv_cache = TTLCache(maxsize=100, ttl=300)
+search_cache = TTLCache(maxsize=200, ttl=300)
 
 class MarketDataService:
     @staticmethod
@@ -44,6 +45,32 @@ class MarketDataService:
             if isinstance(e, HTTPException):
                 raise e
             raise HTTPException(status_code=500, detail=f"Failed to fetch data: {str(e)}")
+
+    @staticmethod
+    @cached(cache=search_cache)
+    def search_symbols(query: str, limit: int = 10) -> list:
+        # Look up tickers by company name or partial symbol via Yahoo's search
+        # (yf.Search handles the session/crumb for us).
+        query = query.strip()
+        if not query:
+            return []
+        try:
+            quotes = yf.Search(query, max_results=limit).quotes
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Symbol search failed: {str(e)}")
+
+        results = []
+        for q in quotes:
+            symbol = q.get("symbol")
+            if not symbol:
+                continue
+            results.append({
+                "symbol": symbol,
+                "name": q.get("shortname") or q.get("longname") or symbol,
+                "exchange": q.get("exchDisp") or q.get("exchange"),
+                "type": q.get("quoteType") or q.get("typeDisp"),
+            })
+        return results
 
     @staticmethod
     @cached(cache=ohlcv_cache)

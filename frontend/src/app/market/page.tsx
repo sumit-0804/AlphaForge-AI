@@ -1,19 +1,37 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { fetchStockInfo, executeTrade } from "@/lib/api";
 import { currency, compact, number, percent } from "@/lib/format";
 import { useWatchlist } from "@/store/watchlist";
-import { StackIcon, MagnifyingGlassIcon, StarIcon } from "@phosphor-icons/react";
+import { PriceChart } from "@/components/price-chart";
+import { TickerSearch } from "@/components/ticker-search";
+import { StarIcon } from "@phosphor-icons/react";
 
 
-export default function MarketPage() {
-    const [input, setInput] = useState("");
-    const [ticker, setTicker] = useState("");
+function MarketView() {
+    // ?ticker=AAPL preloads the page. Without this the watchlist and scanner
+    // "open in market" links landed on an empty search box.
+    const params = useSearchParams();
+    const fromUrl = (params.get("ticker") ?? "").toUpperCase();
+
+    const [input, setInput] = useState(fromUrl);
+    const [ticker, setTicker] = useState(fromUrl);
     const [qty, setQty] = useState(1);
     const qc = useQueryClient()
     const watchlist = useWatchlist()
+
+    // Client-side navigation to /market?ticker=X while already on /market does
+    // not remount, so the initial useState above would keep the stale symbol.
+    useEffect(() => {
+        const t = (params.get("ticker") ?? "").toUpperCase();
+        if (t && t !== ticker) {
+            setInput(t);
+            setTicker(t);
+        }
+    }, [params, ticker]);
 
     const info = useQuery({
         queryKey: ["stock", ticker],
@@ -29,6 +47,13 @@ export default function MarketPage() {
             qc.invalidateQueries({ queryKey: ["transactions"] });
         },
     });
+    function selectSymbol(sym: string) {
+        const s = sym.toUpperCase();
+        setInput(s);
+        setTicker(s);
+        trade.reset();
+    }
+
     const data = info.data;
 
     return (
@@ -43,15 +68,12 @@ export default function MarketPage() {
                 }}
                 className="flex gap-2 max-w-md"
             >
-                <div className="relative flex-1">
-                    <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} />
-                    <input
-                        value={input}
-                        onChange={(e) => setInput(e.target.value)}
-                        placeholder="Search ticker e.g. AAPL"
-                        className="w-full rounded-md border bg-background py-2 pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-ring"
-                    />
-                </div>
+                <TickerSearch
+                    value={input}
+                    onChange={setInput}
+                    onSelect={selectSymbol}
+                    className="flex-1"
+                />
                 <button type="submit" className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">
                     Search
                 </button>
@@ -61,6 +83,7 @@ export default function MarketPage() {
             {info.isError && <p className="text-red-600">{(info.error as Error).message}</p>}
 
             {data && (
+                <>
                 <div className="grid gap-6 lg:grid-cols-3">
                     <div className="lg:col-span-2 rounded-lg border bg-card p-5">
                         <div className="flex items-start justify-between">
@@ -133,10 +156,22 @@ export default function MarketPage() {
                         {trade.isError && <p className="text-sm text-red-600">{(trade.error as Error).message}</p>}
                     </div>
                 </div>
+                <PriceChart ticker={data.symbol ?? ticker} />
+                </>
             )}
         </div>
     );
 }
+export default function MarketPage() {
+    // useSearchParams requires a Suspense boundary — without one the whole
+    // client tree above it is forced out of prerendering.
+    return (
+        <Suspense fallback={<p className="text-muted-foreground">Loading market…</p>}>
+            <MarketView />
+        </Suspense>
+    );
+}
+
 function Field({ label, value }: { label: string; value: string }) {
     return (
         <div>

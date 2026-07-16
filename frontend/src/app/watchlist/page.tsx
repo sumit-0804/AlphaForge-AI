@@ -52,7 +52,7 @@ export default function WatchlistPage() {
             return (
               <div key={t} className="rounded-lg border bg-card p-4">
                 <div className="flex items-start justify-between">
-                  <Link href="/market" className="font-semibold hover:underline">
+                  <Link href={`/market?ticker=${t}`} className="font-semibold hover:underline">
                     {t}
                   </Link>
                   <button

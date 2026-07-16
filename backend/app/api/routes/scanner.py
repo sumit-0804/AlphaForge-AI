@@ -1,27 +1,29 @@
 from fastapi import APIRouter
-from pydantic import BaseModel
 
 from app.services.market_scanner import MarketScannerService
+from app.agents.scanner_agent import ScannerAgentService
 
-router = APIRouter(prefix="/scanner", tags=["Market Scanner"])
-
-
-class ScanRequest(BaseModel):
-    tickers: list[str] | None = None
-    period: str = "3mo"
-    interval: str = "1d"
-    limit: int = 10
+router = APIRouter(prefix="/scanner", tags=["Scanner"])
 
 
 @router.get("/")
-async def scan_default(period: str = "3mo", interval: str = "1d", limit: int = 10):
-    # Scans the built-in default universe.
-    return await MarketScannerService.scan(None, period, interval, limit)
+async def scan(
+    period: str = "3mo",
+    interval: str = "1d",
+    limit: int = 10,
+    triage: bool = True,
+    market: str = "ALL",
+):
+    """Scan a market universe for technical entry setups.
 
+    `market` selects the universe: NSE, BSE, IN (both Indian), US, or ALL.
 
-@router.post("/")
-async def scan_custom(req: ScanRequest):
-    # Scans a caller-supplied watchlist.
-    return await MarketScannerService.scan(
-        req.tickers, req.period, req.interval, req.limit
-    )
+    Two tiers: the rule-based scan is free and always runs, while `triage=true`
+    adds a single LLM pass that ranks and explains the shortlist. Deep per-ticker
+    analysis is deliberately NOT run here — that is `/workflow/{ticker}`, and it
+    is the user's choice which candidates are worth it.
+    """
+    result = await MarketScannerService.scan(None, period, interval, limit, market)
+    if triage and result["candidates"]:
+        result["triage"] = await ScannerAgentService.triage(result["candidates"])
+    return result

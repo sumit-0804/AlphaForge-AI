@@ -1,17 +1,19 @@
 import json
 from fastapi import HTTPException
 
-from app.services.market_data import MarketDataService
-from app.services.technical_analysis import TechnicalAnalysisService
 from app.services.llm_service import LLMService
+from app.agents.tools import RESEARCH_TOOLS
 from app.agents.util import _parse
-from app.core.exchanges import get_exchange
 
 SYSTEM_PROMPT = (
-    "You are AlphaForge Research Agent, an equity research assistant. "
-    "You are given market data, technical indicators and (optionally) recent news "
-    "for a single stock. Analyse it objectively and respond ONLY with a valid JSON "
-    "object — no markdown, no text outside the JSON. Use this exact schema:\n"
+    "You are AlphaForge Research Agent, an autonomous equity research analyst. "
+    "You have TOOLS that pull live data: company profile, technical indicators, "
+    "fundamentals, recent news, and AlphaForge's memory of lessons from past "
+    "trades. Investigate the given stock by calling whatever tools you need — YOU "
+    "decide which ones and in what order, and you may skip tools that aren't "
+    "relevant. Gather enough evidence to form a defensible view, then STOP calling "
+    "tools and respond ONLY with a valid JSON object — no markdown, no text "
+    "outside the JSON. Use this exact schema:\n"
     "{\n"
     '  "summary": "2-3 sentence overview of the stock\'s current state",\n'
     '  "strengths": ["short bullet", "short bullet"],\n'
@@ -25,60 +27,33 @@ SYSTEM_PROMPT = (
 
 
 class ResearchAgentService:
-    # Phase 7: gathers market + technical (+ optional news) context and asks the
-    # local LLM for a structured research report.
-
-    @staticmethod
-    def _build_context(ticker: str, news: list[dict] | None = None) -> dict:
-        info = MarketDataService.get_stock_info(ticker)
-        indicators = TechnicalAnalysisService.get_technical_indicators(ticker)
-        ex = get_exchange(ticker)
-        return {
-            "profile": {
-                "symbol": info.get("symbol"),
-                "name": info.get("longName") or info.get("shortName"),
-                "exchange": ex.name,
-                "currency": info.get("currency") or ex.currency or "USD",
-                "sector": info.get("sector"),
-                "industry": info.get("industry"),
-                "currentPrice": info.get("currentPrice"),
-                "marketCap": info.get("marketCap"),
-                "fiftyTwoWeekHigh": info.get("fiftyTwoWeekHigh"),
-                "fiftyTwoWeekLow": info.get("fiftyTwoWeekLow"),
-                "volume": info.get("volume"),
-                "averageVolume": info.get("averageVolume"),
-            },
-            "technical": indicators.get("latest", {}),
-            "news": news or [],
-        }
-
-    @staticmethod
-    def _build_messages(ticker: str, context: dict) -> list[dict]:
-        prompt = (
-            f"Produce a research report for {ticker.upper()}.\n\n"
-            f"Market & fundamentals:\n{json.dumps(context['profile'], indent=2)}\n\n"
-            f"Latest technical indicators:\n{json.dumps(context['technical'], indent=2)}\n\n"
-        )
-        prompt += (
-            f"Recent news:\n{json.dumps(context['news'], indent=2)}\n\n"
-            if context["news"]
-            else "Recent news: none provided.\n\n"
-        )
-        prompt += "Return the JSON research object now."
-        return [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ]
+    # Autonomous, tool-using research agent. Instead of pre-fetching a fixed
+    # context and stuffing it into one prompt, the agent decides at run time which
+    # tools to call (profile / technical / fundamentals / news / memory) and loops
+    # until it has enough evidence, then emits a structured research report.
 
     @classmethod
     async def research(cls, ticker: str, news: list[dict] | None = None) -> dict:
         try:
-            context = cls._build_context(ticker, news)
-            messages = cls._build_messages(ticker, context)
-            result = await LLMService.chat(messages, temperature=0.3)
+            ticker = ticker.upper()
+            task = f"Research {ticker} and return the JSON research object."
+            if news:
+                # Caller already has headlines — hand them over so the agent can
+                # skip the news tool if it wants.
+                task += f"\n\nCaller-provided news:\n{json.dumps(news, indent=2)}"
+
+            messages = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": task},
+            ]
+            result = await LLMService.chat_with_tools(
+                messages, RESEARCH_TOOLS, temperature=0.3
+            )
             return {
-                "symbol": ticker.upper(),
+                "symbol": ticker,
                 "model": result["model"],
+                # The agent's decision trail — which tools it chose to call.
+                "steps": result.get("tool_trace", []),
                 "report": _parse(
                     result["content"],
                     {
