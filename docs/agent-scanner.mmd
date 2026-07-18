@@ -1,0 +1,39 @@
+---
+config:
+  flowchart:
+    curve: basis
+---
+graph TB
+    %% Hand-authored. Source: app/agents/scanner_agent.py
+    %% + app/services/market_scanner.py
+
+    IN(["universe<br/><i>NSE · BSE · US</i>"]) --> RULES["rule scan · no LLM<br/>breakout · volume<br/>EMA cross · RSI recovery"]
+    RULES --> ANY{"any<br/>candidates?"}
+    ANY -->|"none"| EMPTY(["empty shortlist"])
+    ANY -->|"yes"| ONE["ONE LLM call<br/>for the WHOLE list"]
+
+    ONE --> VAL{"covers exactly<br/>the candidates given?"}
+    VAL -->|"symbol missing<br/>or invented"| RETRY["self-correct<br/><i>max 2 retries</i>"]
+    RETRY --> ONE
+    VAL -->|"yes"| OUT(["ranked shortlist<br/>conviction · thesis<br/>invalidation"])
+    RETRY -.->|"retries exhausted"| FB(["rule-score order<br/>valid: false"])
+
+    OUT --> PICK{{"user picks<br/>which to analyse"}}
+    PICK -->|"Deep analysis"| WF(["LangGraph workflow<br/><i>~15 calls, 1 ticker</i>"])
+
+    NOTE["Why one call, not one per name:<br/>the full workflow across 45 names<br/>would be ~700 model calls"]
+    ONE -.- NOTE
+
+    classDef io fill:#dbeafe,stroke:#2563eb,color:#172554
+    classDef step fill:#fef3c7,stroke:#d97706,color:#451a03
+    classDef dec fill:#fed7aa,stroke:#ea580c,color:#431407
+    classDef good fill:#dcfce7,stroke:#16a34a,color:#052e16
+    classDef bad fill:#fee2e2,stroke:#dc2626,color:#450a0a
+    classDef note fill:#f1f5f9,stroke:#64748b,color:#0f172a
+
+    class IN,OUT,WF,EMPTY io
+    class RULES good
+    class ONE,RETRY step
+    class ANY,VAL,PICK dec
+    class FB bad
+    class NOTE note

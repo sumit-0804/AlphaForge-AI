@@ -57,6 +57,12 @@ def get_exchange(ticker: str) -> Exchange:
     return EXCHANGES.get(suffix, _UNKNOWN)
 
 
+def currency_for_ticker(ticker: str) -> str:
+    # "RELIANCE.NS" -> "INR"  |  "AAPL" -> "USD". Used when a quote payload is
+    # unavailable; live quotes carry their own `currency` and should win.
+    return get_exchange(ticker).currency or "USD"
+
+
 def news_query(ticker: str) -> str:
     # "RELIANCE.NS" -> "RELIANCE NSE stock"  |  "AAPL" -> "AAPL stock"
     base, _ = split_ticker(ticker)

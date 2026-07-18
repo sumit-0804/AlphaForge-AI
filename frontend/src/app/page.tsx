@@ -37,9 +37,16 @@ export default function HomePage() {
       {p && (
         <>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <Stat label="Total Value" value={currency(p.total_portfolio_value)} />
-            <Stat label="Cash Balance" value={currency(p.cash_balance)} />
-            <Stat label="Total P&L" value={currency(p.total_pnl)} className={pnlClass(p.total_pnl)} />
+            <Stat
+              label={`Total Value (${p.base_currency})`}
+              value={currency(p.total_portfolio_value, p.base_currency)}
+            />
+            <Stat label="Cash Balance" value={currency(p.cash_balance, p.base_currency)} />
+            <Stat
+              label="Total P&L"
+              value={currency(p.total_pnl, p.base_currency)}
+              className={pnlClass(p.total_pnl)}
+            />
             <Stat label="Positions" value={String(p.positions.length)} />
           </div>
 
@@ -70,10 +77,14 @@ export default function HomePage() {
                     <tr key={pos.ticker} className="border-b last:border-0">
                       <td className="px-4 py-2 font-medium">{pos.ticker}</td>
                       <td className="px-4 py-2 text-right">{pos.quantity}</td>
-                      <td className="px-4 py-2 text-right">{currency(pos.current_price)}</td>
-                      <td className="px-4 py-2 text-right">{currency(pos.current_value)}</td>
+                      <td className="px-4 py-2 text-right">
+                        {currency(pos.current_price, pos.currency)}
+                      </td>
+                      <td className="px-4 py-2 text-right">
+                        {currency(pos.current_value, pos.currency)}
+                      </td>
                       <td className={`px-4 py-2 text-right ${pnlClass(pos.pnl)}`}>
-                        {currency(pos.pnl)} ({percent(pos.pnl_percent)})
+                        {currency(pos.pnl, pos.currency)} ({percent(pos.pnl_percent)})
                       </td>
                     </tr>
                   ))}

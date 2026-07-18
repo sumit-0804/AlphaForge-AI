@@ -39,7 +39,10 @@ export function AdvisorPanel() {
         onSuccess: (tx) => {
             setDone((d) => ({
                 ...d,
-                [tx.ticker]: `${tx.action.toUpperCase()} ${tx.quantity} @ ${currency(tx.price)}`,
+                [tx.ticker]: `${tx.action.toUpperCase()} ${tx.quantity} @ ${currency(
+                    tx.price,
+                    tx.currency ?? "USD"
+                )}`,
             }));
             qc.invalidateQueries({ queryKey: ["portfolio"] });
             qc.invalidateQueries({ queryKey: ["transactions"] });
@@ -130,8 +133,10 @@ export function AdvisorPanel() {
 
                                     {p && (
                                         <p className="mt-1 text-xs text-muted-foreground">
-                                            {p.quantity} sh · avg {currency(p.avg_buy_price)} · now{" "}
-                                            {currency(p.current_price)} · {p.weight_pct}% of book
+                                            {p.quantity} sh · avg{" "}
+                                            {currency(p.avg_buy_price, p.currency ?? "USD")} · now{" "}
+                                            {currency(p.current_price, p.currency ?? "USD")} ·{" "}
+                                            {p.weight_pct}% of book
                                         </p>
                                     )}
 

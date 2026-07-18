@@ -1,0 +1,43 @@
+---
+config:
+  flowchart:
+    curve: basis
+---
+graph TB
+    %% Hand-authored. Source: app/agents/research_agent.py
+    %% + LLMService.chat_with_tools in app/services/llm_service.py
+
+    IN(["research node<br/>ticker"]) --> BIND["bind RESEARCH_TOOLS<br/>to the model"]
+    BIND --> CALL["model turn"]
+    CALL --> Q{"requested<br/>tool calls?"}
+
+    Q -->|"no — model answered"| OUT
+    Q -->|"yes"| EXEC["execute each tool<br/>append ToolMessage"]
+    EXEC --> CAP{"iteration<br/>cap (6)?"}
+    CAP -->|"under cap"| CALL
+    CAP -->|"hit cap"| FORCE["forced tool-free<br/>final synthesis"]
+    FORCE --> OUT["_parse to JSON<br/><i>fallback if unstructured</i>"]
+
+    OUT --> RES(["report + tool_trace"])
+
+    subgraph TOOLS["Tools — the model picks which, and in what order"]
+        direction LR
+        T1["get_stock_profile"]
+        T2["get_technical_indicators"]
+        T3["get_fundamentals"]
+        T4["get_recent_news"]
+        T5["search_memory"]
+    end
+
+    EXEC -.-> TOOLS
+    TOOLS -.->|"never raises —<br/>returns {error} so the<br/>agent adapts"| EXEC
+
+    classDef io fill:#dbeafe,stroke:#2563eb,color:#172554
+    classDef step fill:#fef3c7,stroke:#d97706,color:#451a03
+    classDef dec fill:#fed7aa,stroke:#ea580c,color:#431407
+    classDef tool fill:#dcfce7,stroke:#16a34a,color:#052e16
+
+    class IN,RES io
+    class BIND,CALL,EXEC,FORCE,OUT step
+    class Q,CAP dec
+    class T1,T2,T3,T4,T5 tool

@@ -1,0 +1,34 @@
+---
+config:
+  flowchart:
+    curve: basis
+---
+graph TB
+    %% Hand-authored. Source: app/agents/reflection_agent.py
+    %% Triggered from TradingService.execute_trade on a SELL.
+
+    SELL(["paper trade closed<br/><i>SELL</i>"]) --> BG["fire-and-forget<br/>background task"]
+    BG --> PNL["compute realised P&L<br/>absolute + percent"]
+    PNL --> PRIOR["recall prior lessons<br/>for this ticker"]
+    PRIOR --> CALL["LLM call<br/><i>bare chat, no retry loop</i>"]
+    CALL --> PARSE["_parse<br/><i>fallback if unstructured</i>"]
+    PARSE --> LESSON(["one reusable lesson"])
+    LESSON --> SAVE["MemoryService.save<br/>type: lesson"]
+    SAVE --> MONGO[("MongoDB")]
+    SAVE --> FAISS[("FAISS")]
+
+    FAISS -.->|"recalled by"| PRIOR
+    FAISS ==>|"injected into every future<br/>moderator prompt for this ticker"| DEB(["debate committee"])
+
+    GAP["This is the one agent still on bare chat +<br/>_parse rather than the self-correcting<br/>chat_json path — an unstructured reply here<br/>becomes a permanent prior on this ticker"]
+    CALL -.- GAP
+
+    classDef io fill:#dbeafe,stroke:#2563eb,color:#172554
+    classDef step fill:#fef3c7,stroke:#d97706,color:#451a03
+    classDef store fill:#fae8ff,stroke:#a21caf,color:#4a044e
+    classDef warn fill:#fee2e2,stroke:#dc2626,color:#450a0a
+
+    class SELL,LESSON,DEB io
+    class BG,PNL,PRIOR,CALL,PARSE,SAVE step
+    class MONGO,FAISS store
+    class GAP warn

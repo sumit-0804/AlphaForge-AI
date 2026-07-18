@@ -86,18 +86,31 @@ export const fetchHistory = (ticker: string, period = "1mo", interval = "1d") =>
 
 export type PositionSummary = {
     ticker:string;
-    quantity: string;
+    quantity: number;
+    /** The stock's own listing currency — "INR" for .NS/.BO, "USD" for US. */
+    currency: string;
+    // Denominated in `currency`.
     average_buy_price: number;
     current_price : number;
     current_value: number;
     pnl: number;
     pnl_percent: number;
+    /** Denominated in `base_currency`; null when the FX lookup failed. */
+    base_currency: string;
+    fx_rate: number | null;
+    current_value_base: number | null;
+    cost_basis_base: number | null;
+    pnl_base: number | null;
 }
 export type PortfolioSummary= {
     user_id: string;
+    /** Currency of cash_balance, total_portfolio_value and total_pnl. */
+    base_currency: string;
     cash_balance: number;
     total_portfolio_value: number;
     total_pnl: number;
+    /** Tickers excluded from the total because no FX rate was available. */
+    unconverted: string[];
     positions: PositionSummary[];
 }
 
@@ -162,6 +175,8 @@ export const fetchScan = (limit = 10, triage = true, market: UniverseKey = "ALL"
 export type AdvisorPosition = {
     ticker: string;
     quantity: number;
+    /** Listing currency of avg_buy_price / current_price / pnl. */
+    currency: string | null;
     avg_buy_price: number;
     current_price: number;
     pnl: number;
@@ -193,7 +208,13 @@ export type Transaction = {
     ticker: string;
     action: "buy" | "sell";
     quantity: number;
+    /** Execution price in the stock's listing currency. */
     price: number;
+    currency: string | null;
+    /** FX applied at execution, and the resulting cash movement in base. */
+    fx_rate: number | null;
+    base_currency: string | null;
+    total_base: number | null;
     timestamp: string;
 }
 

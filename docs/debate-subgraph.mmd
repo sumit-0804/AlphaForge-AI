@@ -1,0 +1,20 @@
+---
+config:
+  flowchart:
+    curve: linear
+---
+graph TD;
+	__start__([<p>__start__</p>]):::first
+	opening(opening)
+	rebut(rebut)
+	moderate(moderate)
+	__end__([<p>__end__</p>]):::last
+	__start__ --> opening;
+	opening -.-> moderate;
+	opening -.-> rebut;
+	rebut -.-> moderate;
+	moderate --> __end__;
+	rebut -.-> rebut;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc

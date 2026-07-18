@@ -1,0 +1,42 @@
+---
+config:
+  flowchart:
+    curve: basis
+---
+graph TB
+    %% Hand-authored. Shared shape for the four narration agents:
+    %% fundamental_agent, news_agent, risk_agent, portfolio_agent.
+    %% Loop source: LLMService.chat_json in app/services/llm_service.py
+
+    IN(["pre-computed data<br/><i>metrics · headlines · risk · plan</i>"])
+    IN --> CALL["LLM call<br/><i>temperature 0.3</i>"]
+    CALL --> PARSE{"valid JSON?"}
+    PARSE -->|"no"| FIX
+    PARSE -->|"yes"| SEM{"passes semantic<br/>validator?"}
+    SEM -->|"no"| FIX["show the model its own<br/>bad output + the problem"]
+    SEM -->|"yes"| OK(["structured narration<br/>valid: true"])
+
+    FIX --> RETRY{"retries left?<br/><i>max 2</i>"}
+    RETRY -->|"yes"| CALL
+    RETRY -->|"no"| FB(["fallback object<br/>valid: false"])
+
+    subgraph USERS["Agents using this shape"]
+        direction LR
+        N1["fundamental<br/><i>verdict enum</i>"]
+        N2["news<br/><i>no validator</i>"]
+        N3["risk<br/><i>non-empty summary</i>"]
+        N4["portfolio<br/><i>non-empty summary</i>"]
+    end
+
+    classDef io fill:#dbeafe,stroke:#2563eb,color:#172554
+    classDef step fill:#fef3c7,stroke:#d97706,color:#451a03
+    classDef dec fill:#fed7aa,stroke:#ea580c,color:#431407
+    classDef bad fill:#fee2e2,stroke:#dc2626,color:#450a0a
+    classDef good fill:#dcfce7,stroke:#16a34a,color:#052e16
+
+    class IN io
+    class CALL,FIX step
+    class PARSE,SEM,RETRY dec
+    class FB bad
+    class OK good
+    class N1,N2,N3,N4 good

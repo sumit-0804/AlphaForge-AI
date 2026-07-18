@@ -1,0 +1,74 @@
+---
+config:
+  flowchart:
+    curve: basis
+---
+graph TB
+    %% Hand-authored — NOT generated from code. Update when architecture changes.
+    %% Organised by what TRIGGERS each agent, since that is the thing the
+    %% per-graph diagrams cannot show. Graph internals live in mermaid.png.
+
+    subgraph TRIG["Triggers"]
+        direction LR
+        T1["User · Scanner page"]
+        T2["User · Deep analysis"]
+        T3["User · Buy / Sell"]
+        T4["Scheduler<br/>IN 09:20/12:00/15:20 IST<br/>US 09:35/15:30 ET<br/>report 16:00 IST"]
+    end
+
+    subgraph LLM["LLM agents"]
+        direction LR
+        A1["Scanner triage<br/><i>1 call per scan</i>"]
+        A2["Portfolio advisor<br/><i>1 call per book</i>"]
+        A3["Reflection<br/><i>on closed trade</i>"]
+        A4["Risk + allocation<br/>narration"]
+        WF["LangGraph workflow<br/><i>~15 calls per ticker</i><br/>research · technical · fundamental<br/>news · gate · debate"]
+    end
+
+    subgraph DET["Deterministic core · no LLM"]
+        direction LR
+        S1["MarketScanner<br/>entry + exit signals"]
+        S2["Indicators ·<br/>Fundamentals · Risk"]
+        S3["Trading ·<br/>Allocation"]
+    end
+
+    subgraph STORE["Persistence"]
+        direction LR
+        D1[("MongoDB")]
+        D2[("FAISS<br/>vector memory")]
+    end
+
+    EXT["yfinance · Google News RSS · Gemini"]
+
+    T1 --> S1 --> A1
+    T1 --> A2 --> S1
+    T2 --> WF
+    T3 --> S3
+    S3 -->|"on SELL"| A3
+    T4 --> S1
+    T4 --> S2 --> A4
+
+    WF --> S2
+    A1 -.->|"user picks a candidate"| WF
+
+    A3 -->|"distilled lesson"| D2
+    WF -->|"recommendation"| D1
+    WF -->|"recommendation"| D2
+    D2 -.->|"prior lessons recalled"| WF
+    S3 --> D1
+    A4 --> D1
+
+    DET ==> EXT
+    LLM ==> EXT
+
+    classDef trig fill:#dbeafe,stroke:#2563eb,color:#172554
+    classDef agent fill:#fef3c7,stroke:#d97706,color:#451a03
+    classDef svc fill:#dcfce7,stroke:#16a34a,color:#052e16
+    classDef store fill:#fae8ff,stroke:#a21caf,color:#4a044e
+    classDef ext fill:#f1f5f9,stroke:#64748b,color:#0f172a
+
+    class T1,T2,T3,T4 trig
+    class A1,A2,A3,A4,WF agent
+    class S1,S2,S3 svc
+    class D1,D2 store
+    class EXT ext

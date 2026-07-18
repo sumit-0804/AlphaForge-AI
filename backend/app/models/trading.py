@@ -8,12 +8,24 @@ from app.models.utc import utc_serializer
 class Position(BaseModel):
     ticker:str
     quantity:int
+    # Always in the stock's OWN listing currency — ₹ for .NS/.BO, $ for US — so
+    # the per-position figures a user compares against their broker stay honest.
     average_buy_price: float
+    currency: str | None = None
+    # What this holding actually cost the cash balance, in the portfolio's base
+    # currency. Kept alongside the native price rather than derived from it: the
+    # rate on the day of purchase is the one that moved the cash, so recomputing
+    # at today's rate would quietly rewrite history every time FX moves.
+    # None on positions opened before currency support — backfilled on read.
+    cost_basis_base: float | None = None
 
 class Portfolio(Document):
     user_id:str = "default_user"
     cash_balance:float = 100000.0
     positions: List[Position] =[]
+    # Denomination of cash_balance and every *_base figure. Stored per-portfolio
+    # so changing the app default later cannot silently reinterpret old books.
+    base_currency: str | None = None
 
     class Settings:
         name = "portfolios"
@@ -23,7 +35,14 @@ class Transaction(Document):
     ticker:str
     action:str
     quantity:int
+    # Native listing currency, matching what the exchange quoted.
     price:float
+    currency: str | None = None
+    # The FX rate used and the resulting base-currency cash movement, recorded
+    # at execution time so a statement can be reconstructed exactly.
+    fx_rate: float | None = None
+    base_currency: str | None = None
+    total_base: float | None = None
     timestamp:datetime = Field(default_factory=lambda:datetime.now(timezone.utc))
 
     _ser_timestamp = utc_serializer("timestamp")

@@ -1,13 +1,38 @@
-export const currency = (n: number | null | undefined, code: string = "USD") =>
-    n == null ? "-" : n.toLocaleString("en-US", { style: "currency", currency: code });
+/* ---------- money ----------
+ * Every amount belongs to a currency, so `code` is required at the call site —
+ * a defaulted "USD" is what let ₹ positions render as dollars. Backend payloads
+ * now carry a `currency` (the stock's own) and a `base_currency` (the book's);
+ * pass whichever the number is actually denominated in.
+ */
+
+// INR reads naturally with lakh/crore grouping (₹1,23,456), which en-US will not
+// produce. Other currencies keep en-US grouping.
+const localeFor = (code: string) => (code === "INR" ? "en-IN" : "en-US");
+
+export const currency = (n: number | null | undefined, code: string) => {
+    if (n == null) return "-";
+    if (!code) return number(n);
+    try {
+        return n.toLocaleString(localeFor(code), { style: "currency", currency: code });
+    } catch {
+        // Non-ISO or unknown code — show the number with the code appended
+        // rather than throwing inside a render.
+        return `${number(n)} ${code}`;
+    }
+};
 
 export const number = (n: number | null | undefined) =>
     n == null ? "-" : n.toLocaleString("en-US")
 
 export const percent = (n: number | null | undefined) => n==null ? "-" : `${ n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
 
-export const compact = (n: number | null | undefined) => 
-    n== null ? "-" : Intl.NumberFormat("en-US",{ notation: "compact"}).format(n);
+export const compact = (n: number | null | undefined, code?: string) => {
+    if (n == null) return "-";
+    return Intl.NumberFormat(code ? localeFor(code) : "en-US", {
+        notation: "compact",
+        ...(code ? { style: "currency", currency: code } : {}),
+    }).format(n);
+};
 
 export const pnlClass = (n: number) =>
     n>0 ? "text-emerald-600" : n<0 ? "text-red-600" : "text-muted-foreground";

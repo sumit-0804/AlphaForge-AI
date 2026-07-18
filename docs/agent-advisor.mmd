@@ -1,0 +1,42 @@
+---
+config:
+  flowchart:
+    curve: basis
+---
+graph TB
+    %% Hand-authored. Source: app/agents/advisor_agent.py
+
+    IN(["held positions"]) --> ANY{"any open<br/>positions?"}
+    ANY -->|"none"| EMPTY(["nothing to advise"])
+    ANY -->|"yes"| EXIT["exit-signal scan · no LLM<br/>breakdown · death cross<br/>lost EMA50 · RSI rollover<br/>volume selloff"]
+
+    EXIT --> ENRICH["enrich each position<br/>cost basis · P&L · weight<br/>bearish signals + score"]
+    ENRICH --> ONE["ONE LLM call<br/>for the WHOLE book"]
+
+    ONE --> VAL{"validator"}
+    VAL -->|"covers every holding"| V2{"action in<br/>HOLD/SELL/TRIM/ADD"}
+    VAL -->|"missing or<br/>unheld ticker"| RETRY
+    V2 -->|"quantity ≤ shares held"| OUT(["per-position suggestion<br/>action · urgency · rationale"])
+    V2 -->|"over-sell or<br/>bad action"| RETRY["self-correct<br/><i>max 2 retries</i>"]
+    RETRY --> ONE
+    RETRY -.->|"retries exhausted"| FB(["rule-based fallback<br/>SELL only if score ≥ 5<br/>otherwise HOLD"])
+
+    OUT --> ACT{{"user clicks the action"}}
+    ACT --> TRADE(["POST /trading/execute"])
+
+    NOTE["The quantity cap matters: an unbounded<br/>suggestion would render a button that<br/>can only fail at execution"]
+    V2 -.- NOTE
+
+    classDef io fill:#dbeafe,stroke:#2563eb,color:#172554
+    classDef step fill:#fef3c7,stroke:#d97706,color:#451a03
+    classDef dec fill:#fed7aa,stroke:#ea580c,color:#431407
+    classDef good fill:#dcfce7,stroke:#16a34a,color:#052e16
+    classDef bad fill:#fee2e2,stroke:#dc2626,color:#450a0a
+    classDef note fill:#f1f5f9,stroke:#64748b,color:#0f172a
+
+    class IN,OUT,TRADE,EMPTY io
+    class EXIT,ENRICH good
+    class ONE,RETRY step
+    class ANY,VAL,V2,ACT dec
+    class FB bad
+    class NOTE note

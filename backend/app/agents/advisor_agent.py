@@ -1,15 +1,4 @@
-"""Portfolio advisor — turns held positions into suggested actions.
-
-Answers the question nothing else in the system does: "given what I already own,
-what should I do about it?" The entry scanner only ever looks for reasons to buy
-and RiskService only reports volatility and beta, so a position quietly breaking
-down produced no signal anywhere.
-
-Like the scanner triage this is ONE LLM call for the whole book, not one per
-holding — the model needs to see positions relative to each other anyway to
-reason about concentration, and per-position calls would not survive the shared
-rate limiter.
-"""
+#Portfolio advisor — turns held positions into suggested actions.
 
 import json
 
@@ -105,15 +94,25 @@ class AdvisorAgentService:
             )
 
             total = summary.get("total_portfolio_value") or 0
+            base = summary.get("base_currency")
             enriched = [
                 {
                     "ticker": p["ticker"],
                     "quantity": p["quantity"],
+                    # Prices stay in the listing currency; the LLM is told which
+                    # one so it does not compare a ₹ price against a $ one.
+                    "currency": p.get("currency"),
                     "avg_buy_price": p["average_buy_price"],
                     "current_price": p["current_price"],
                     "pnl": p["pnl"],
                     "pnl_percent": p["pnl_percent"],
-                    "weight_pct": round(p["current_value"] / total * 100, 2) if total else 0.0,
+                    # Weight must be computed on the base-converted value — the
+                    # native one is not comparable across currencies.
+                    "weight_pct": (
+                        round(p["current_value_base"] / total * 100, 2)
+                        if total and p.get("current_value_base") is not None
+                        else 0.0
+                    ),
                     "bearish_signals": exits.get(p["ticker"], {}).get("signals", []),
                     "bearish_score": exits.get(p["ticker"], {}).get("score", 0),
                 }
@@ -126,8 +125,9 @@ class AdvisorAgentService:
                 {
                     "role": "user",
                     "content": (
-                        f"Cash balance: {summary.get('cash_balance')}\n"
-                        f"Total portfolio value: {total}\n\n"
+                        f"Cash balance: {summary.get('cash_balance')} {base}\n"
+                        f"Total portfolio value: {total} {base} "
+                        f"(positions converted from their listing currency)\n\n"
                         f"Positions:\n{json.dumps(enriched, indent=2, default=str)}\n\n"
                         "Return the JSON suggestions now."
                     ),

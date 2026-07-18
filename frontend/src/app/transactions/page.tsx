@@ -61,8 +61,20 @@ export default function TransactionsPage() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right">{tx.quantity}</td>
-                    <td className="px-4 py-3 text-right">{currency(tx.price)}</td>
-                    <td className="px-4 py-3 text-right">{currency(tx.price * tx.quantity)}</td>
+                    {/* Executed price is in the stock's listing currency; the
+                        total also shows what actually moved in base currency
+                        when the two differ. */}
+                    <td className="px-4 py-3 text-right">
+                      {currency(tx.price, tx.currency ?? "USD")}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      {currency(tx.price * tx.quantity, tx.currency ?? "USD")}
+                      {tx.total_base != null && tx.base_currency !== tx.currency && (
+                        <span className="block text-xs text-muted-foreground">
+                          {currency(tx.total_base, tx.base_currency ?? "USD")}
+                        </span>
+                      )}
+                    </td>
                   </tr>
                 ))
               )}

@@ -68,8 +68,12 @@ export default function WatchlistPage() {
                 {d && (
                   <>
                     <p className="mt-1 truncate text-xs text-muted-foreground">{d.shortName}</p>
-                    <p className="mt-2 text-xl font-semibold">{currency(d.currentPrice)}</p>
-                    <p className="text-xs text-muted-foreground">Mkt cap {compact(d.marketCap)}</p>
+                    <p className="mt-2 text-xl font-semibold">
+                      {currency(d.currentPrice, d.currency)}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Mkt cap {compact(d.marketCap, d.currency)}
+                    </p>
                   </>
                 )}
               </div>
