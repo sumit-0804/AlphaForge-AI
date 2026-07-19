@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -7,6 +8,13 @@ from app.api.router import api_router
 from app.core.config import settings
 from app.db.mongo import init_db
 from app.services.scheduler import start_scheduler, shutdown_scheduler
+
+# uvicorn adds no root handler, so set one up or our INFO logs get dropped.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)-8s %(name)s | %(message)s",
+)
+
 
 @asynccontextmanager
 async def lifespan(_:FastAPI):

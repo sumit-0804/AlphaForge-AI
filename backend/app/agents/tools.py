@@ -1,15 +1,6 @@
-"""Agent tools — services exposed as LLM-callable functions.
-
-This is what makes an AlphaForge agent *agentic* rather than a fixed prompt: the
-model is handed these tools and decides, at run time, which data to pull and in
-what order. Each tool wraps an existing service, runs blocking yfinance calls off
-the event loop, and returns a compact JSON string. Tools never raise — on failure
-they return an ``{"error": ...}`` payload so the agent can adapt (proceed with
-partial evidence) instead of the whole loop crashing.
-
-The docstrings matter: they are sent to the model verbatim as the tool
-descriptions, so they double as the agent's instructions for when to use each one.
-"""
+"""LLM-callable tools that wrap services. Each returns JSON and never raises — errors
+come back as an {"error": ...} payload. The function docstrings are sent to the model
+verbatim, so keep them descriptive."""
 
 import json
 import asyncio
@@ -83,8 +74,11 @@ async def get_recent_news(ticker: str) -> str:
 async def search_memory(query: str, ticker: str | None = None) -> str:
     """Search AlphaForge's long-term memory for prior lessons distilled from past
     closed trades and earlier analysis. Call this to avoid repeating past mistakes
-    or to check whether a prior thesis on this name played out. Optionally scope to
-    a ticker."""
+    or to check whether a prior thesis on this name played out. Lessons transfer
+    across stocks — a mistake made on one name is worth knowing about on any name
+    in the same setup — so leave `ticker` unset and describe the SITUATION in the
+    query (sector, trend, momentum, valuation) to find those; set `ticker` only
+    when you specifically want this stock's own history."""
     try:
         hits = await MemoryService.search(query, k=3, ticker=ticker)
         return _dump([h.get("content") for h in hits])

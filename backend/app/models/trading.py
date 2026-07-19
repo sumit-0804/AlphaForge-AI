@@ -8,23 +8,17 @@ from app.models.utc import utc_serializer
 class Position(BaseModel):
     ticker:str
     quantity:int
-    # Always in the stock's OWN listing currency — ₹ for .NS/.BO, $ for US — so
-    # the per-position figures a user compares against their broker stay honest.
+    # In the stock's own listing currency.
     average_buy_price: float
     currency: str | None = None
-    # What this holding actually cost the cash balance, in the portfolio's base
-    # currency. Kept alongside the native price rather than derived from it: the
-    # rate on the day of purchase is the one that moved the cash, so recomputing
-    # at today's rate would quietly rewrite history every time FX moves.
-    # None on positions opened before currency support — backfilled on read.
+    # What this holding cost in the book's base currency, at the day's rate. None on old positions.
     cost_basis_base: float | None = None
 
 class Portfolio(Document):
     user_id:str = "default_user"
     cash_balance:float = 100000.0
     positions: List[Position] =[]
-    # Denomination of cash_balance and every *_base figure. Stored per-portfolio
-    # so changing the app default later cannot silently reinterpret old books.
+    # Currency of cash_balance and every *_base figure, fixed per portfolio.
     base_currency: str | None = None
 
     class Settings:
@@ -35,11 +29,10 @@ class Transaction(Document):
     ticker:str
     action:str
     quantity:int
-    # Native listing currency, matching what the exchange quoted.
+    # In the stock's own listing currency.
     price:float
     currency: str | None = None
-    # The FX rate used and the resulting base-currency cash movement, recorded
-    # at execution time so a statement can be reconstructed exactly.
+    # FX rate and base-currency amount recorded at execution time.
     fx_rate: float | None = None
     base_currency: str | None = None
     total_base: float | None = None

@@ -11,8 +11,7 @@ class DailyReport(Document):
     portfolio: dict | None = None
     risk: dict | None = None
     scan: dict | None = None
-    # Capital plan built over the scan's candidates, with the portfolio agent's
-    # plain-language read attached under "analysis".
+    # Allocation plan over the scan's candidates, with the agent's read under "analysis".
     allocation: dict | None = None
 
     _ser_date = utc_serializer("date")

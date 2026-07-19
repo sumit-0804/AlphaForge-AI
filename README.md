@@ -70,9 +70,28 @@ without it the UI could render a Sell button that can only fail at execution.
 ![Reflection agent](docs/agent-reflection.png)
 
 Fires on a closed trade and writes a distilled lesson into FAISS, which is then
-injected into every future moderator prompt for that ticker. Note this is the
-one agent still on bare `chat` + `_parse` rather than the self-correcting
-`chat_json` path, so an unstructured reply here becomes a permanent prior.
+injected into future moderator prompts. Recall is deliberately **not** restricted
+to the ticker the lesson came from: a lesson records a mistake or a pattern, not a
+fact about a company, so `_recall_memory` runs a second ticker-unscoped search
+keyed on the *current setup* — sector, trend, momentum, financial health — and
+returns those as `cross_ticker_lessons`, kept separate from the stock's own
+history so the moderator never reads another company's blow-up as this one's.
+
+Because lessons are only written when a trade is closed, an empty recall is
+normal on a fresh install — and would otherwise be indistinguishable from a
+broken loop. Every recall therefore carries a `status`
+(`ok` / `no_lessons_yet` / `index_unavailable` / `index_degraded`), surfaced on
+the recommendation as `explanation.learned_context.status`, and
+`GET /api/memory/health` answers the same question directly by comparing what
+Mongo holds against whether the FAISS index exists.
+
+A lesson is permanent and gets replayed into later debates, including on other
+tickers, so this agent runs on the same self-correcting `chat_json` path as the
+narrators — with a validator requiring a non-empty `lesson` and an `outcome` of
+`WIN`/`LOSS`/`BREAKEVEN`. If the model still can't produce one after its retries,
+**nothing is stored**: a malformed reply must not become a prior that every future
+debate reads as advice. The reported `outcome` stays correct regardless, because
+it is computed from realised P&L rather than taken from the model.
 
 ### Narration agents — shared shape
 

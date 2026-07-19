@@ -6,8 +6,7 @@ from app.services.llm_service import LLMService
 
 
 def _validate_plan(obj: dict) -> str | None:
-    # Semantic check beyond "is it JSON": the explanation is useless without a
-    # summary. Returning a message triggers another self-correction attempt.
+    # Require a summary — an explanation without one is useless.
     if not isinstance(obj.get("summary"), str) or not obj["summary"].strip():
         return "The JSON is missing a non-empty 'summary' string."
     return None

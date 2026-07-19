@@ -42,10 +42,7 @@ class FundamentalAgentService:
 
     @classmethod
     async def narrate(cls, data: dict) -> dict:
-        # Takes pre-fetched metrics instead of fetching its own. The graph node
-        # has already paid for the (blocking) yfinance call; re-fetching here
-        # would duplicate that I/O and risk the narrative describing a different
-        # snapshot than the numbers shown beside it.
+        # Uses pre-fetched metrics so it doesn't refetch or describe a different snapshot.
         try:
             metrics = {
                 k: data[k]

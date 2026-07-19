@@ -27,10 +27,7 @@ SYSTEM_PROMPT = (
 
 
 class ResearchAgentService:
-    # Autonomous, tool-using research agent. Instead of pre-fetching a fixed
-    # context and stuffing it into one prompt, the agent decides at run time which
-    # tools to call (profile / technical / fundamentals / news / memory) and loops
-    # until it has enough evidence, then emits a structured research report.
+    # Tool-using agent: it picks which tools to call and loops until it can report.
 
     @classmethod
     async def research(cls, ticker: str, news: list[dict] | None = None) -> dict:
@@ -38,8 +35,7 @@ class ResearchAgentService:
             ticker = ticker.upper()
             task = f"Research {ticker} and return the JSON research object."
             if news:
-                # Caller already has headlines — hand them over so the agent can
-                # skip the news tool if it wants.
+                # Pass in any headlines the caller already has so the agent can skip the news tool.
                 task += f"\n\nCaller-provided news:\n{json.dumps(news, indent=2)}"
 
             messages = [
@@ -47,12 +43,12 @@ class ResearchAgentService:
                 {"role": "user", "content": task},
             ]
             result = await LLMService.chat_with_tools(
-                messages, RESEARCH_TOOLS, temperature=0.3
+                messages, RESEARCH_TOOLS, temperature=0.4
             )
             return {
                 "symbol": ticker,
                 "model": result["model"],
-                # The agent's decision trail — which tools it chose to call.
+                # Which tools the agent chose to call.
                 "steps": result.get("tool_trace", []),
                 "report": _parse(
                     result["content"],

@@ -11,15 +11,12 @@ class PortfolioService:
 
     @staticmethod
     def _weights(items: list[dict], max_pos:float, max_sector:float, iters:int = 25)-> list[float]:
-        # Start from the caller's conviction weights, then enforce the caps by
-        # iterating position water-filling + sector scaling until stable. Weight
-        # shed by a capped sector is left uninvested (falls through to cash).
+        # Start from the conviction weights and apply the caps until they settle.
         n = len(items)
         w = [it["weight"] for it in items]
         for _ in range(iters):
             changed = False
-            # Per-position cap: clamp over-cap names, redistribute the excess to
-            # names with headroom, proportional to how much room each has.
+            # Clamp names over the position cap and spread the excess to those with room.
             excess = 0.0
             for i in range(n):
                 if w[i] > max_pos + 1e-9:
@@ -33,7 +30,7 @@ class PortfolioService:
                         if w[i] < max_pos - 1e-9:
                             w[i] += excess * (max_pos - w[i]) / headroom
 
-            # Per-sector cap: scale any over-cap sector's members down to the cap.
+            # Scale any sector that's over its cap back down.
             sectors: dict[str, list[int]] = {}
             for i in range(n):
                 sectors.setdefault(items[i]["sector"], []).append(i)

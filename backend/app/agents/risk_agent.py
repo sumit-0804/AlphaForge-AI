@@ -37,9 +37,7 @@ class RiskAgentService:
                     ),
                 },
             ]
-            # Self-correcting: this now runs inside the unattended daily-report
-            # job, where a silently unstructured fallback would sit in the stored
-            # report unnoticed rather than being caught by a caller.
+            # Self-correcting since this runs unattended in the daily report.
             result = await LLMService.chat_json(
                 messages,
                 fallback={

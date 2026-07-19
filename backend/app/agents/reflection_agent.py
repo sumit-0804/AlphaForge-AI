@@ -1,8 +1,12 @@
 import json
+import logging
 
 from app.services.llm_service import LLMService
 from app.services.memory import MemoryService
-from app.agents.util import _parse
+
+logger = logging.getLogger(__name__)
+
+_OUTCOMES = ("WIN", "LOSS", "BREAKEVEN")
 
 SYSTEM_PROMPT = (
     "You are AlphaForge Reflection Agent. A paper trade has just been closed. "
@@ -18,6 +22,18 @@ SYSTEM_PROMPT = (
     "}\n"
     "This is educational analysis, not financial advice."
 )
+
+
+def _validate_reflection(obj: dict) -> str | None:
+    # A lesson is stored permanently, so make sure it's well-formed before saving.
+    if obj.get("outcome") not in _OUTCOMES:
+        return f"'outcome' must be exactly one of {', '.join(_OUTCOMES)}."
+    lesson = obj.get("lesson")
+    if not isinstance(lesson, str) or not lesson.strip():
+        return "The JSON is missing a non-empty 'lesson' string."
+    if not isinstance(obj.get("summary"), str) or not obj["summary"].strip():
+        return "The JSON is missing a non-empty 'summary' string."
+    return None
 
 
 class ReflectionAgentService:
@@ -61,33 +77,56 @@ class ReflectionAgentService:
                 ),
             },
         ]
-        result = await LLMService.chat(messages, temperature=0.3)
-        reflection = _parse(
-            result["content"],
-            {
+        result = await LLMService.chat_json(
+            messages,
+            fallback={
+                # Outcome comes from the P&L, so it's correct even if the model fails.
                 "outcome": "WIN" if pnl > 0 else "LOSS" if pnl < 0 else "BREAKEVEN",
-                "summary": result["content"].strip(),
+                "summary": "The reflection agent did not return a usable review of this trade.",
                 "what_went_right": [],
                 "what_went_wrong": [],
                 "lesson": "",
             },
+            temperature=0.3,
+            validate=_validate_reflection,
         )
+        reflection = result["data"]
+        valid = result["valid"]
+        stored = False
 
-        lesson_text = reflection.get("lesson") or reflection.get("summary", "")
-        try:
-            await MemoryService.save(
-                "lesson",
-                f"[{reflection.get('outcome')}] {ticker} realized {pnl_pct}% "
-                f"(buy {trade['avg_buy_price']} -> sell {trade['sell_price']}): {lesson_text}",
-                ticker=ticker,
-                metadata={
-                    "outcome": reflection.get("outcome"),
-                    "realized_pnl": pnl,
-                    "realized_pnl_pct": pnl_pct,
-                },
-                user_id=user_id,
+        if not valid:
+            # Store nothing rather than saving a bad lesson as a permanent prior.
+            logger.warning(
+                "Reflection for %s produced no usable lesson after %d attempt(s)",
+                ticker, result["attempts"],
             )
-        except Exception as e:
-            reflection["_memory_error"] = str(e)
+        else:
+            try:
+                await MemoryService.save(
+                    "lesson",
+                    f"[{reflection['outcome']}] {ticker} realized {pnl_pct}% "
+                    f"(buy {trade['avg_buy_price']} -> sell {trade['sell_price']}): "
+                    f"{reflection['lesson']}",
+                    ticker=ticker,
+                    metadata={
+                        "outcome": reflection["outcome"],
+                        "realized_pnl": pnl,
+                        "realized_pnl_pct": pnl_pct,
+                    },
+                    user_id=user_id,
+                )
+                stored = True
+            except Exception as e:
+                reflection["_memory_error"] = str(e)
+                logger.exception("Could not store the lesson for %s", ticker)
 
-        return {"symbol": ticker, "model": result["model"], "trade": trade, "reflection": reflection}
+        return {
+            "symbol": ticker,
+            "model": result["model"],
+            "trade": trade,
+            "reflection": reflection,
+            # valid = model gave a good review; stored = a lesson actually got saved.
+            "valid": valid,
+            "stored": stored,
+            "attempts": result["attempts"],
+        }

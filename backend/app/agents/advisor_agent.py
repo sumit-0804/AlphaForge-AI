@@ -1,4 +1,4 @@
-#Portfolio advisor — turns held positions into suggested actions.
+# Portfolio advisor — turns held positions into suggested actions.
 
 import json
 
@@ -58,8 +58,7 @@ def _make_validator(holdings: dict[str, int]):
         for r in s:
             if r.get("action") not in _ACTIONS:
                 return f"'action' for {r.get('ticker')} must be one of {', '.join(_ACTIONS)}."
-            # A suggestion to sell more shares than are held would render as an
-            # action button that can only fail at execution.
+            # Don't suggest selling more shares than are held.
             q = r.get("suggested_quantity", 0)
             if not isinstance(q, int) or q < 0:
                 return f"'suggested_quantity' for {r.get('ticker')} must be a non-negative integer."
@@ -87,8 +86,7 @@ class AdvisorAgentService:
                     "valid": True,
                 }
 
-            # Deterministic exit signals first — the LLM reasons over these
-            # rather than being asked to eyeball price action itself.
+            # Compute exit signals first so the LLM reasons over them, not raw prices.
             exits = await MarketScannerService.scan_positions(
                 [p["ticker"] for p in positions]
             )
@@ -99,15 +97,13 @@ class AdvisorAgentService:
                 {
                     "ticker": p["ticker"],
                     "quantity": p["quantity"],
-                    # Prices stay in the listing currency; the LLM is told which
-                    # one so it does not compare a ₹ price against a $ one.
+                    # Prices stay native; the LLM is told the currency so it won't mix them.
                     "currency": p.get("currency"),
                     "avg_buy_price": p["average_buy_price"],
                     "current_price": p["current_price"],
                     "pnl": p["pnl"],
                     "pnl_percent": p["pnl_percent"],
-                    # Weight must be computed on the base-converted value — the
-                    # native one is not comparable across currencies.
+                    # Weight uses the base-converted value so currencies are comparable.
                     "weight_pct": (
                         round(p["current_value_base"] / total * 100, 2)
                         if total and p.get("current_value_base") is not None
@@ -136,8 +132,7 @@ class AdvisorAgentService:
             result = await LLMService.chat_json(
                 messages,
                 fallback={
-                    # Degrade to the deterministic read: flag whatever is actually
-                    # breaking down, hold everything else. Never fabricate a SELL.
+                    # If the LLM fails, fall back to the rule-based signals; never invent a SELL.
                     "suggestions": [
                         {
                             "ticker": e["ticker"],

@@ -1,14 +1,5 @@
-"""UTC-safe datetime serialization for anything that crosses the API boundary.
-
-Every model stores `datetime.now(timezone.utc)`, but MongoDB round-trips BSON
-dates as NAIVE datetimes — the offset is gone by the time the value is read back.
-Serialized bare, "2026-07-20T07:15:58" is interpreted by `new Date(...)` in the
-browser as *local* time, so a UTC instant renders 5h30m early in IST and hours
-off everywhere else that isn't UTC.
-
-Attaching UTC on the way out makes the wire format unambiguous, which is what
-lets the frontend render in whatever timezone the viewer is actually in.
-"""
+# Serialize datetimes as UTC ISO strings, since Mongo returns them naive and the browser
+# would otherwise read them as local time.
 
 from datetime import datetime, timezone
 

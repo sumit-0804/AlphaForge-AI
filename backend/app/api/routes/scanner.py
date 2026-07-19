@@ -14,15 +14,7 @@ async def scan(
     triage: bool = True,
     market: str = "ALL",
 ):
-    """Scan a market universe for technical entry setups.
-
-    `market` selects the universe: NSE, BSE, IN (both Indian), US, or ALL.
-
-    Two tiers: the rule-based scan is free and always runs, while `triage=true`
-    adds a single LLM pass that ranks and explains the shortlist. Deep per-ticker
-    analysis is deliberately NOT run here — that is `/workflow/{ticker}`, and it
-    is the user's choice which candidates are worth it.
-    """
+    """Scan a market universe for entry setups; triage=true adds an LLM pass to rank them."""
     result = await MarketScannerService.scan(None, period, interval, limit, market)
     if triage and result["candidates"]:
         result["triage"] = await ScannerAgentService.triage(result["candidates"])

@@ -11,6 +11,7 @@ from app.agents.debate_agent import DebateAgentService
 from app.agents.fundamental_agent import FundamentalAgentService
 from app.services.technical_analysis import TechnicalAnalysisService
 from app.services.fundamentals import FundamentalService
+from app.services.risk import RiskService
 from app.services.memory import MemoryService
 from app.models.recommendation import Recommendation
 
@@ -22,10 +23,24 @@ class AnalysisState(TypedDict, total=False):
     fundamental: dict
     fundamental_narrative: dict
     news: dict
+    risk: dict
     consensus: dict
     debate: dict
     recommendation: dict
     errors: Annotated[list[str], add]
+
+
+# High volatility or beta makes a call less certain, so cap confidence at MEDIUM.
+_RISK_CONF_CAP_VOL = 40.0    # annualized %, matching analyze_ticker's units
+_RISK_CONF_CAP_BETA = 1.5
+
+
+def _risk_caps_confidence(risk: dict | None) -> bool:
+    if not risk:
+        return False
+    vol, beta = risk.get("volatility"), risk.get("beta")
+    return (vol is not None and vol >= _RISK_CONF_CAP_VOL) or \
+           (beta is not None and beta >= _RISK_CONF_CAP_BETA)
 
 
 async def research_node(state: AnalysisState) -> dict:
@@ -36,7 +51,7 @@ async def research_node(state: AnalysisState) -> dict:
 
 async def technical_node(state: AnalysisState) -> dict:
     try:
-        # Sync yfinance/pandas_ta call -> keep it off the event loop.
+        # yfinance/pandas_ta is sync, so run it in a thread.
         data = await asyncio.to_thread(
             TechnicalAnalysisService.get_technical_indicators, state["ticker"]
         )
@@ -53,11 +68,7 @@ async def fundamental_node(state: AnalysisState) -> dict:
     except Exception as e:
         return {"errors": [f"fundamental: {e}"]}
 
-    # The plain-language read is folded in here rather than sitting behind its
-    # own endpoint. It runs in the parallel fan-out alongside the research and
-    # news nodes, which are already LLM-bound, so it costs no extra wall-clock
-    # on the critical path — and a narration failure must never lose us the
-    # numbers, so it degrades to metrics-only instead of failing the node.
+    # Add the plain-language read here; if it fails, keep the numbers anyway.
     out: dict = {"fundamental": data}
     try:
         out["fundamental_narrative"] = await FundamentalAgentService.narrate(data)
@@ -73,19 +84,23 @@ async def news_node(state: AnalysisState) -> dict:
     except Exception as e:
         return {"errors": [f"news: {e}"]}
 
+async def risk_node(state: AnalysisState) -> dict:
+    try:
+        return {"risk": await RiskService.analyze_ticker(state["ticker"])}
+    except Exception as e:
+        return {"errors": [f"risk: {e}"]}
+
 async def debate_node(state: AnalysisState) -> dict:
     try:
-        # News has its own node above; run the debate with include_news=False so
-        # the local model isn't asked to summarise the same headlines twice.
-        return {"debate": await DebateAgentService.debate(state["ticker"], include_news=False)}
+        # News runs in its own node, so skip it here to avoid summarising it twice.
+        # Risk is already computed, so hand it over rather than refetching.
+        return {"debate": await DebateAgentService.debate(
+            state["ticker"], include_news=False, risk=state.get("risk")
+        )}
     except Exception as e:
         return {"errors": [f"debate: {e}"]}
 
-# --- Conditional routing --------------------------------------------------
-# After the data-gathering nodes, a deterministic gate reads how strongly the
-# signals agree. If every available signal points the same way, we skip the
-# (expensive, multi-LLM-call) debate and issue the decision directly; only genuinely
-# contested cases pay for the Bull/Bear/Moderator committee.
+# If every signal agrees, skip the expensive debate and decide directly.
 
 def _signal_votes(state: AnalysisState) -> dict:
     votes: dict[str, int] = {}
@@ -117,13 +132,8 @@ def _signal_votes(state: AnalysisState) -> dict:
     return votes
 
 
-# The research agent reaches its recommendation by calling the SAME technical,
-# fundamental and news tools the other three nodes read. Counting its vote as a
-# peer of those three double-counts the identical evidence and manufactures
-# unanimity — which then skips the committee precisely on the high-conviction
-# calls that most deserve scrutiny. We keep the vote visible for transparency but
-# exclude it from the unanimity test, using it only as corroboration: an
-# explicitly dissenting research agent forces the debate.
+# Research reads the same data as the other nodes, so its vote is shown but not
+# counted toward unanimity — only a dissent from it forces the debate.
 _DERIVED_SIGNALS = {"research"}
 
 
@@ -133,10 +143,10 @@ def _consensus(votes: dict) -> dict:
     }
     total = sum(independent.values())
     n = len(independent)
-    # Unanimous = at least two INDEPENDENT signals, all pointing the same way.
+    # Unanimous = at least two independent signals all pointing the same way.
     unanimous = n >= 2 and abs(total) == n
 
-    # Corroboration check: the derived research view must not contradict them.
+    # Research must not contradict them for the quick path.
     research = votes.get("research", 0)
     dissent = bool(unanimous and research and (research > 0) != (total > 0))
 
@@ -144,7 +154,7 @@ def _consensus(votes: dict) -> dict:
     action = confidence = None
     if skip_debate:
         action = "BUY" if total > 0 else "SELL"
-        # HIGH only when all three independent signals line up.
+        # HIGH only when all three signals line up.
         confidence = "HIGH" if n >= 3 else "MEDIUM"
     return {
         "votes": votes,
@@ -164,20 +174,24 @@ async def gate_node(state: AnalysisState) -> dict:
 
 
 def route_after_gate(state: AnalysisState) -> str:
-    # The conditional edge: unanimous signals bypass the committee.
+    # Unanimous signals skip the committee.
     return "quick_decision" if (state.get("consensus") or {}).get("route") == "quick" else "debate"
 
 
 async def quick_decision_node(state: AnalysisState) -> dict:
-    # Fast path: signals already agree, so synthesise the decision deterministically
-    # and skip the debate — but still recall memory so the recommendation keeps its
-    # learned_context, exactly as the debate path would.
+    # Signals agree, so decide directly but still recall memory for learned_context.
     c = state.get("consensus") or {}
     ticker = state["ticker"]
     try:
-        memory = await DebateAgentService._recall_memory(ticker)
+        # State works as the situation key — _recall_memory reads technical/fundamental from it.
+        memory = await DebateAgentService._recall_memory(ticker, context=state)
     except Exception:
-        memory = {"prior_lessons": [], "past_recommendations": []}
+        memory = {
+            "prior_lessons": [],
+            "cross_ticker_lessons": [],
+            "past_recommendations": [],
+            "status": "unavailable",
+        }
 
     direction = "bullish" if c.get("score", 0) > 0 else "bearish"
     decision = {
@@ -205,8 +219,7 @@ async def quick_decision_node(state: AnalysisState) -> dict:
 
 
 def _technical_reasons(t: dict | None) -> list[str]:
-    # Deterministic, Python-generated read of the latest indicators -> the
-    # "technical reasons" component. No LLM: the numbers speak for themselves.
+    # Plain-English read of the indicators, no LLM needed.
     if not t:
         return []
     reasons: list[str] = []
@@ -252,15 +265,20 @@ async def recommendation_node(state: AnalysisState) -> dict:
     checks = health.get("checks", [])
     memory = debate.get("memory") or {}
     consensus = state.get("consensus") or {}
+    risk = state.get("risk") or {}
+
+    # A high-risk name can only make us less sure, never flip the call: cap HIGH -> MEDIUM.
+    confidence = decision.get("confidence", "LOW")
+    risk_capped = confidence == "HIGH" and _risk_caps_confidence(risk)
+    if risk_capped:
+        confidence = "MEDIUM"
+
+    # The explainability block behind every recommendation.
     explanation = {
-        # 1. Confidence
-        "confidence": decision.get("confidence", "LOW"),
-        # 2. Technical reasons
+        "confidence": confidence,
         "technical_reasons": _technical_reasons(technical),
-        # 3. News summary
         "news_summary": news.get("summary") or "No news analysed.",
         "news_sentiment": news.get("overall_sentiment", "NEUTRAL"),
-        # 4. Fundamental analysis — deterministic checks plus the agent's read.
         "fundamental_analysis": {
             "health_score": health.get("score"),
             "health_label": health.get("label"),
@@ -268,7 +286,6 @@ async def recommendation_node(state: AnalysisState) -> dict:
             "failed_checks": [c["name"] for c in checks if not c.get("passed")],
             "narrative": narrative or None,
         },
-        # 5. Debate outcome
         "debate_outcome": {
             "decision": decision.get("decision", "HOLD"),
             "rationale": decision.get("rationale"),
@@ -276,24 +293,31 @@ async def recommendation_node(state: AnalysisState) -> dict:
             "bear_case": (debate.get("bear") or {}).get("key_point"),
             "rounds": debate.get("rounds"),
             "converged": debate.get("converged"),
-            # False means the moderator never produced a well-formed verdict and
-            # this HOLD is a fallback, not a judgement. Surfaced so the UI can
-            # distinguish the two instead of presenting a failure as a call.
+            # False means this HOLD is a fallback, not a real verdict.
             "decision_valid": debate.get("decision_valid", True),
         },
-        # 6. Evidence (consolidated raw signals)
         "evidence": {
             "technical": technical,
             "fundamental_health": health,
             "news_sentiment": news.get("overall_sentiment"),
             "research_view": research.get("recommendation"),
         },
-        # 7. Learned context — what past trades/recommendations informed this call
+        "risk": {
+            "volatility": risk.get("volatility"),
+            "beta": risk.get("beta"),
+            "risk_level": risk.get("risk_level"),
+            "benchmark": risk.get("benchmark"),
+            # True when high vol/beta pulled confidence down from HIGH to MEDIUM.
+            "confidence_capped": risk_capped,
+        },
         "learned_context": {
             "prior_lessons": memory.get("prior_lessons", []),
+            # From other tickers in a similar setup — kept separate from this stock's own.
+            "cross_ticker_lessons": memory.get("cross_ticker_lessons", []),
             "past_recommendations": memory.get("past_recommendations", []),
+            # Tells "nothing learned yet" apart from "learning loop broken".
+            "status": memory.get("status", "unknown"),
         },
-        # 8. Routing — which path the graph took and why
         "routing": {
             "path": "quick_decision" if debate.get("skipped") else "debate",
             "signal_votes": consensus.get("votes", {}),
@@ -303,11 +327,18 @@ async def recommendation_node(state: AnalysisState) -> dict:
         },
     }
 
+    rationale = decision.get("rationale", "Insufficient data for a confident call.")
+    if risk_capped:
+        rationale += (
+            f" Confidence was capped to MEDIUM because {state['ticker']} is high-risk "
+            f"(volatility {risk.get('volatility')}%, beta {risk.get('beta')})."
+        )
+
     recommendation = {
         "symbol": state["ticker"],
         "action": decision.get("decision", "HOLD"),
-        "confidence": decision.get("confidence", "LOW"),
-        "rationale": decision.get("rationale", "Insufficient data for a confident call."),
+        "confidence": confidence,
+        "rationale": rationale,
         "explanation": explanation,
         "catalysts": decision.get("key_catalysts", []),
         "risks": decision.get("key_risks", []),
@@ -320,22 +351,24 @@ def build_workflow():
     g.add_node("technical", technical_node)
     g.add_node("fundamental", fundamental_node)
     g.add_node("news", news_node)
+    g.add_node("risk", risk_node)
     g.add_node("gate", gate_node)
     g.add_node("debate", debate_node)
     g.add_node("quick_decision", quick_decision_node)
     g.add_node("recommendation", recommendation_node)
 
-    #                      ┌─ research ─┐
-    #                      ├─ technical ┤          ┌─(contested)→ debate ─┐
-    #  START ─(fan-out)────┼─ fundamental┼─→ gate ─┤                      ├─→ recommendation → END
-    #                      └─ news ──────┘          └─(unanimous)→ quick_decision ┘
+    #                      ┌─ research ───┐
+    #                      ├─ technical ──┤          ┌─(contested)→ debate ─┐
+    #  START ─(fan-out)────┼─ fundamental ┼─→ gate ─┤                      ├─→ recommendation → END
+    #                      ├─ news ───────┤          └─(unanimous)→ quick_decision ┘
+    #                      └─ risk ───────┘
 
-    # The four data-gathering nodes are independent — run them concurrently.
-    for node in ("research", "technical", "fundamental", "news"):
+    # Run the data-gathering nodes at once; gate waits for all of them.
+    for node in ("research", "technical", "fundamental", "news", "risk"):
         g.add_edge(START, node)
-        g.add_edge(node, "gate")  # gate waits for all four (fan-in barrier)
+        g.add_edge(node, "gate")
 
-    # Conditional edge: the gate routes to the committee only when signals conflict.
+    # Route to the committee only when signals conflict.
     g.add_conditional_edges(
         "gate",
         route_after_gate,
@@ -350,7 +383,7 @@ def build_workflow():
 workflow = build_workflow()
 
 class WorkflowService:
-    # Phase 12: orchestrate every agent through LangGraph into one recommendation.
+    # Runs every agent through LangGraph to produce one recommendation.
     @staticmethod
     async def run(ticker: str, include_news: bool = True) -> dict:
         try:
@@ -380,6 +413,7 @@ class WorkflowService:
                 "technical": final.get("technical"),
                 "fundamental": final.get("fundamental"),
                 "news": final.get("news"),
+                "risk": final.get("risk"),
                 "debate": final.get("debate"),
                 "errors": final.get("errors", []),
             }
@@ -390,14 +424,7 @@ class WorkflowService:
     
     @staticmethod
     async def run_stream(ticker: str, include_news: bool = True, rounds: int = 2):
-        """Async generator: run the full pipeline while streaming progress events.
-
-        Mirrors the compiled graph's order (parallel data-gathering → routing gate →
-        debate or fast-path → recommendation) but emits a Server-Sent event as each
-        stage happens, and forwards the committee debate round-by-round — so the UI
-        can show exactly what is being analysed in real time. Reuses the same node
-        functions and routing helpers as `run()`, so there is no logic divergence.
-        """
+        """Run the same pipeline as run() but stream a progress event at each stage for the UI."""
         ticker = ticker.upper()
         state: AnalysisState = {"ticker": ticker, "include_news": include_news}
         try:
@@ -408,6 +435,7 @@ class WorkflowService:
                 "technical": technical_node,
                 "fundamental": fundamental_node,
                 "news": news_node,
+                "risk": risk_node,
             }
             active = {
                 name: fn for name, fn in gather.items()
@@ -419,14 +447,11 @@ class WorkflowService:
             async def _run(name, fn):
                 return name, await fn(state)
 
-            # Fan-out the independent gathering nodes; emit as each completes.
+            # Run the gathering nodes at once and emit each as it finishes.
             pending = [asyncio.create_task(_run(n, f)) for n, f in active.items()]
             for fut in asyncio.as_completed(pending):
                 name, res = await fut
-                # A node may return data AND a non-fatal error — the fundamental
-                # node yields its metrics even when the narration call fails. Keep
-                # whatever data came back instead of discarding the whole result,
-                # and only report `error` status when nothing usable arrived.
+                # A node can return data and a warning; keep the data, only flag error if empty.
                 res = dict(res)
                 errs = res.pop("errors", None)
                 if errs:
@@ -438,7 +463,6 @@ class WorkflowService:
                 else:
                     yield {"type": "node", "node": name, "status": "error", "error": errs or []}
 
-            # Routing gate — the conditional branch.
             consensus = _consensus(_signal_votes(state))
             state["consensus"] = consensus
             yield {"type": "routing", "consensus": consensus}
@@ -450,8 +474,7 @@ class WorkflowService:
                        "decision": qd["debate"]["decision"],
                        "memory": qd["debate"]["memory"]}
             else:
-                # Stream the committee live, forwarding each event, while
-                # reassembling the debate dict the recommendation node needs.
+                # Stream the committee live while rebuilding the debate dict the rec node needs.
                 yield {"type": "debate_start"}
                 bull = bear = None
                 decision: dict = {}
@@ -460,7 +483,7 @@ class WorkflowService:
                 converged = False
                 decision_valid = True
                 async for ev in DebateAgentService.debate_stream(
-                    ticker, include_news=False, max_rounds=rounds
+                    ticker, include_news=False, max_rounds=rounds, risk=state.get("risk")
                 ):
                     yield {"type": "debate", "event": ev}
                     if ev["type"] == "memory":
@@ -484,7 +507,7 @@ class WorkflowService:
             rec = rec_update["recommendation"]
             yield {"type": "recommendation", "recommendation": rec}
 
-            # Persist, exactly as run() does.
+            # Save the recommendation and a memory entry, same as run().
             try:
                 await Recommendation(
                     symbol=ticker,

@@ -3,25 +3,20 @@ from fastapi import HTTPException
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import convert_to_messages, HumanMessage, ToolMessage
-from langchain_core.rate_limiters import InMemoryRateLimiter
 
 from app.core.config import settings
+from app.core.ratelimit import RateLimiter, estimate_tokens
 from app.agents.util import parse_json
 
-# Gemini Flash free tier allows ~10 requests/minute. A single shared limiter caps
-# us just under that so concurrent agents (Bull + Bear) and the scheduler never
-# trip a 429. Blocks (does not drop) until a slot frees up.
-_rate_limiter = InMemoryRateLimiter(
-    requests_per_second=10 / 60,   # ~0.167 rps -> 10 per minute
-    check_every_n_seconds=0.1,
-    max_bucket_size=10,
-)
+# One shared limiter so every chat call draws from the same per-minute budget.
+_chat_limiter = RateLimiter(settings.gemini_rpm, settings.gemini_tpm, "gemini-chat")
+
+# Reserve budget for the reply up front since its size isn't known yet; settle() corrects it.
+_RESERVED_OUTPUT_TOKENS = 1200
 
 
 def _to_text(content) -> str:
-    # Gemini 3.x models return structured content blocks (a list of dicts) rather
-    # than a plain string. Flatten them back to text so every agent keeps
-    # receiving a str it can .strip()/json-parse.
+    # Gemini can return content as a list of blocks; flatten it back to a string.
     if isinstance(content, str):
         return content
     if isinstance(content, list):
@@ -32,6 +27,20 @@ def _to_text(content) -> str:
     return str(content)
 
 
+def _usage_total(resp) -> int | None:
+    # Pull the real token count LangChain attaches as usage_metadata.
+    u = getattr(resp, "usage_metadata", None) or {}
+    total = u.get("total_tokens")
+    if total:
+        return int(total)
+    parts = (u.get("input_tokens") or 0) + (u.get("output_tokens") or 0)
+    return int(parts) or None
+
+
+def _estimate(messages) -> int:
+    return sum(estimate_tokens(_to_text(m.content)) for m in messages) + _RESERVED_OUTPUT_TOKENS
+
+
 class LLMService:
     @staticmethod
     def _client(temperature: float) -> ChatGoogleGenerativeAI:
@@ -39,17 +48,28 @@ class LLMService:
             model=settings.gemini_model,
             google_api_key=settings.google_api_key,
             temperature=temperature,
-            rate_limiter=_rate_limiter,
         )
+
+    @staticmethod
+    async def _invoke(client, msgs):
+        # Every outbound call goes through here so nothing skips the rate limiter.
+        handle = await _chat_limiter.acquire(_estimate(msgs))
+        resp = await client.ainvoke(msgs)
+        _chat_limiter.settle(handle, _usage_total(resp))
+        return resp
 
     @classmethod
     async def chat(cls, messages: list[dict], temperature: float = 0.4) -> dict:
         try:
             client = cls._client(temperature)
-            resp = await client.ainvoke(convert_to_messages(messages))
+            resp = await cls._invoke(client, convert_to_messages(messages))
             return {"model": settings.gemini_model, "content": _to_text(resp.content)}
         except Exception as e:
             raise HTTPException(502, f"LLM request failed: {e}")
+
+    @staticmethod
+    def quota() -> dict:
+        return _chat_limiter.usage()
 
     @classmethod
     async def chat_json(
@@ -60,15 +80,8 @@ class LLMService:
         max_retries: int = 2,
         validate=None,
     ) -> dict:
-        """Chat with a self-correction loop that insists on valid JSON.
-
-        Rather than silently falling back the first time the model returns prose or
-        broken JSON, we show the model its own bad output and the specific problem,
-        and ask it to fix it — up to `max_retries` times. `validate`, if given, is a
-        callable that returns an error string for a semantically bad (but
-        JSON-valid) object, or None if it passes. Returns the parsed object (or
-        `fallback` if every attempt fails) plus loop metadata.
-        """
+        """Chat but retry on bad JSON: show the model its error and ask for a fix, then
+        fall back if it still fails. `validate` returns an error string or None."""
         convo = list(messages)
         model = settings.gemini_model
         for attempt in range(max_retries + 1):
@@ -86,7 +99,7 @@ class LLMService:
             if problem is None and ok:
                 return {"model": model, "data": obj, "attempts": attempt + 1, "valid": True}
 
-            # Self-correct: reflect the bad output back and demand a clean fix.
+            # Show the model its bad output and ask for a corrected one.
             convo = messages + [
                 {"role": "assistant", "content": raw},
                 {
@@ -108,15 +121,8 @@ class LLMService:
         temperature: float = 0.3,
         max_iterations: int = 6,
     ) -> dict:
-        """Run an agentic tool-calling loop (the ReAct pattern).
-
-        The model is bound to `tools` and, on each turn, decides whether to call a
-        tool or answer. We execute any requested tools, feed the results back, and
-        repeat — so the model, not our Python, drives what data gets gathered. The
-        loop exits when the model stops requesting tools or `max_iterations` is hit,
-        at which point we force one final tool-free synthesis. Returns the final
-        text plus a `tool_trace` recording every tool the agent chose to call.
-        """
+        """Let the model call tools in a loop until it answers or hits max_iterations,
+        then force a final tool-free answer. Returns the text plus a trace of tool calls."""
         client = cls._client(temperature).bind_tools(tools)
         tool_map = {t.name: t for t in tools}
         convo = convert_to_messages(messages)
@@ -124,12 +130,12 @@ class LLMService:
 
         try:
             for _ in range(max_iterations):
-                ai = await client.ainvoke(convo)
+                ai = await cls._invoke(client, convo)
                 convo.append(ai)
 
                 calls = getattr(ai, "tool_calls", None) or []
                 if not calls:
-                    # Model answered without asking for more data — we're done.
+                    # No tool requested, so the model is done.
                     return {
                         "model": settings.gemini_model,
                         "content": _to_text(ai.content),
@@ -150,10 +156,10 @@ class LLMService:
                     trace.append({"tool": name, "args": args, "result_preview": output[:240]})
                     convo.append(ToolMessage(content=output, tool_call_id=tc["id"]))
 
-            # Iteration cap reached: force a final, tool-free answer so callers
-            # always get a synthesis rather than a dangling tool request.
-            final = await cls._client(temperature).ainvoke(
-                convo + [HumanMessage("Stop calling tools and return your final answer now.")]
+            # Hit the cap, so force a final answer with no more tool calls.
+            final = await cls._invoke(
+                cls._client(temperature),
+                convo + [HumanMessage("Stop calling tools and return your final answer now.")],
             )
             return {
                 "model": settings.gemini_model,

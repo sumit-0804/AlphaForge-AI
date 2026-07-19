@@ -14,9 +14,7 @@ async def recommendation_history(ticker: str | None = None, limit: int = 20):
 
 @router.get("/{ticker}/stream")
 async def run_workflow_stream(ticker: str, news: bool = True, rounds: int = 2):
-    # Server-Sent Events: streams the whole pipeline live — each data-gathering
-    # node as it finishes, the routing decision, the committee debate round by
-    # round, and finally the explainable recommendation.
+    # Streams the whole pipeline live: each node, the routing, the debate, then the recommendation.
     rounds = max(1, min(rounds, 5))
 
     async def event_source():
@@ -40,6 +38,5 @@ async def run_workflow_stream(ticker: str, news: bool = True, rounds: int = 2):
 
 @router.get("/{ticker}")
 async def run_workflow(ticker: str, news: bool = True):
-    # Full agentic pipeline -> explainable recommendation.
-    # ?news=false skips the news node for a faster run.
+    # Run the full pipeline; ?news=false skips the news node for speed.
     return await WorkflowService.run(ticker.upper(), include_news=news)

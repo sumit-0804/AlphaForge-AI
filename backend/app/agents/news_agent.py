@@ -11,8 +11,7 @@ from app.core.exchanges import news_query, news_country
 
 
 def _rss_url(query: str, country: str) -> str:
-    # Explicit setting wins; otherwise auto-detect the edition from the ticker's
-    # exchange; blank -> Google's global/IP-based English edition.
+    # Use the configured edition, else the ticker's exchange, else the global one.
     url = f"https://news.google.com/rss/search?q={quote_plus(query)}&hl={settings.news_lang}"
     gl = settings.news_country or country
     if gl:
@@ -35,8 +34,7 @@ SYSTEM_PROMPT = (
 
 
 class NewsAgentService:
-    # Phase 8: fetch RSS headlines, then summarise + score sentiment via the LLM.
-    # Query terms and the news edition both come from the central exchange registry.
+    # Fetch RSS headlines, then summarise and score sentiment via the LLM.
 
     @staticmethod
     def _fetch_rss_sync(ticker: str, limit: int) -> list[dict]:
@@ -56,7 +54,7 @@ class NewsAgentService:
 
     @classmethod
     async def fetch_rss(cls, ticker: str, limit: int = 10) -> list[dict]:
-        # feedparser.parse is blocking I/O — run it off the event loop.
+        # feedparser.parse blocks, so run it in a thread.
         return await asyncio.to_thread(cls._fetch_rss_sync, ticker.upper(), limit)
 
     @classmethod

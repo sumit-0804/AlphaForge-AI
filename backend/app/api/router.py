@@ -3,11 +3,7 @@ from fastapi import APIRouter
 from app.api.routes import health, market, trading, scanner, advisor
 from app.api.routes import debate, workflow, memory, scheduler
 
-# The LangGraph workflow is the single orchestration path for per-ticker
-# analysis: research, technical, fundamental and news all run as nodes inside it
-# rather than as standalone endpoints, so there is exactly one place an analysis
-# can be produced. Portfolio-level work (risk, allocation) is folded into the
-# scheduler's daily report for the same reason.
+# Per-ticker analysis runs through the workflow; portfolio work runs in the daily report.
 api_router = APIRouter()
 api_router.include_router(health.router)
 api_router.include_router(market.router)

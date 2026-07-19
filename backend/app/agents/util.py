@@ -2,10 +2,7 @@ import json
 
 
 def parse_json(content: str) -> tuple[dict | None, bool]:
-    # Extract a JSON object from a (possibly fenced or chatty) LLM response and
-    # report whether it parsed. Returns (obj, True) on success, (None, False)
-    # otherwise — the success flag is what lets the self-correction loop know it
-    # needs to re-prompt.
+    # Pull a JSON object out of an LLM reply; returns (obj, True) or (None, False).
     text = content.strip()
     if text.startswith("```"):
         text = text.strip("`")
@@ -23,7 +20,6 @@ def parse_json(content: str) -> tuple[dict | None, bool]:
 
 
 def _parse(content: str, fallback: dict) -> dict:
-    # Convenience wrapper: return the parsed object or `fallback` when no valid
-    # JSON object can be recovered.
+    # Return the parsed object, or the fallback if it didn't parse.
     obj, ok = parse_json(content)
     return obj if ok else fallback

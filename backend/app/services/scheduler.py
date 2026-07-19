@@ -15,7 +15,7 @@ from app.models.report import DailyReport
 from app.core.exchanges import MARKETS, market_status
 
 scheduler = AsyncIOScheduler(timezone=settings.scheduler_timezone)
-_last_runs: dict = {}   # in-memory snapshot of each job's most recent run
+_last_runs: dict = {}   # each job's most recent run
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -58,13 +58,7 @@ async def run_daily_report(user_id: str = "default_user") -> dict:
         except Exception as e:
             report[key] = {"error": str(e)}
 
-    # --- Portfolio-level agentic pass -------------------------------------
-    # Risk narration and capital allocation used to hang off standalone /risk
-    # and /portfolio/allocate endpoints. Both reason over the whole book rather
-    # than a single ticker, so they don't belong in the per-ticker workflow
-    # graph — the daily report is the only place a portfolio-level view is
-    # actually assembled, so they run here. Each is best-effort: a failed
-    # narration must not cost us the computed numbers underneath it.
+    # Add whole-book risk narration and allocation; keep the numbers if narration fails.
     risk = report.get("risk")
     if isinstance(risk, dict) and risk.get("positions"):
         try:
@@ -76,8 +70,7 @@ async def run_daily_report(user_id: str = "default_user") -> dict:
     candidates = scan.get("candidates") if isinstance(scan, dict) else None
     if candidates:
         try:
-            # The scanner's signal score becomes the allocator's conviction
-            # weight, so the strongest technical setups get the larger targets.
+            # Use each scan score as its allocation conviction weight.
             plan = await PortfolioService.allocate(
                 [
                     {"ticker": c["symbol"], "conviction": float(c.get("score", 1))}
@@ -133,11 +126,7 @@ def start_scheduler() -> None:
                       args=["final_scan", "IN"],
                       id="final_scan", replace_existing=True)
 
-    # US session. Scheduled in EASTERN time, not a hardcoded IST offset — the US
-    # market moves against IST by an hour twice a year for DST, so pinning these
-    # to IST would drift the scans outside market hours for months at a time.
-    # ZoneInfo handles the shift; for a viewer in Kolkata these fire at 19:00 IST
-    # in summer and 20:00 in winter automatically.
+    # US session, scheduled in Eastern time so DST is handled automatically.
     scheduler.add_job(run_scan, CronTrigger(hour=9, minute=35, timezone=US_TZ),
                       args=["us_open_scan", "US"],
                       id="us_open_scan", replace_existing=True)

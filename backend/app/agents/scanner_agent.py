@@ -48,9 +48,7 @@ def _make_validator(symbols: set[str]):
         got = {r.get("symbol") for r in ranked if isinstance(r, dict)}
         missing = symbols - got
         unknown = got - symbols
-        # The model must cover exactly the candidates it was given — dropping
-        # names silently shrinks the user's shortlist, and invented tickers would
-        # surface as clickable "Analyze" actions for stocks that never scanned.
+        # The model must cover exactly the given candidates — no drops, no invented tickers.
         if missing:
             return f"These symbols are missing from 'ranked': {sorted(missing)}."
         if unknown:
@@ -79,9 +77,7 @@ class ScannerAgentService:
             },
         ]
         try:
-            # Fall back to the deterministic rule ranking if the model can't
-            # produce a clean list — the user still gets their candidates, just
-            # without the narrative layer.
+            # Fall back to the rule-based ranking if the model can't return a clean list.
             result = await LLMService.chat_json(
                 messages,
                 fallback={

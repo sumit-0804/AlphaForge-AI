@@ -13,7 +13,7 @@ class MarketDataService:
     @staticmethod
     @cached(cache=stock_cache)
     def get_stock_info(ticker:str)-> Dict[str, Any]:
-        #fetch info and current state of stock
+        # Fetch info and current price for a stock.
         try:
             stock = yf.Ticker(ticker)
             info = stock.info
@@ -34,8 +34,7 @@ class MarketDataService:
                 "averageVolume": info.get("averageVolume"),
                 "fiftyTwoWeekHigh": info.get("fiftyTwoWeekHigh"),
                 "fiftyTwoWeekLow": info.get("fiftyTwoWeekLow"),
-                # Exchange context from the central registry (falls back to
-                # yfinance's own currency when available).
+                # Exchange info from the registry, falling back to yfinance's currency.
                 "exchange": ex.code or None,
                 "exchangeName": ex.name,
                 "country": ex.country or None,
@@ -49,8 +48,7 @@ class MarketDataService:
     @staticmethod
     @cached(cache=search_cache)
     def search_symbols(query: str, limit: int = 10) -> list:
-        # Look up tickers by company name or partial symbol via Yahoo's search
-        # (yf.Search handles the session/crumb for us).
+        # Search tickers by company name or partial symbol via Yahoo.
         query = query.strip()
         if not query:
             return []
@@ -75,7 +73,7 @@ class MarketDataService:
     @staticmethod
     @cached(cache=ohlcv_cache)
     def get_ohlcv_data(ticker: str, period:str = "1mo", interval:str = "1d") -> list:
-        #Fetch historical OHLCV data for charts.
+        # Fetch historical OHLCV data for charts.
         try:
             stock = yf.Ticker(ticker)
             hist = stock.history(period=period, interval=interval)

@@ -1,5 +1,6 @@
 import json
 import asyncio
+import logging
 from operator import add
 from typing import Annotated, TypedDict
 
@@ -45,12 +46,17 @@ MODERATOR_PROMPT = (
     "You are given the raw evidence plus the FULL multi-round debate transcript "
     "between the Bull and Bear analysts (opening arguments followed by rebuttals). "
     "Judge which side's points survived rebuttal and weigh both sides objectively. "
-    "The evidence may include a 'memory' block with prior lessons learned from past "
-    "closed trades and previous recommendations on this stock — if present, "
-    "explicitly weigh those lessons and note in your rationale when history informs "
-    "the call (e.g. repeating a past mistake or confirming a prior thesis). Issue a "
-    "final, explainable decision. Respond ONLY with a valid JSON object — no "
-    "markdown:\n"
+    "The evidence may include a 'memory' block: 'prior_lessons' and "
+    "'past_recommendations' are this stock's own history, while "
+    "'cross_ticker_lessons' are lessons learned on OTHER stocks that were in a "
+    "similar setup — treat those as general pattern warnings, not as events that "
+    "happened to this company, and say which stock a lesson came from if you cite "
+    "it. If present, explicitly weigh these lessons and note in your rationale when "
+    "history informs the call (e.g. repeating a past mistake or confirming a prior "
+    "thesis). The evidence may also include a 'risk' block (volatility, beta, "
+    "risk_level): a high-risk name does not change whether to buy or sell, but it "
+    "should make you more cautious about a HIGH confidence rating. Issue a final, "
+    "explainable decision. Respond ONLY with a valid JSON object — no markdown:\n"
     "{\n"
     '  "decision": "BUY | HOLD | SELL",\n'
     '  "confidence": "LOW | MEDIUM | HIGH",\n'
@@ -64,12 +70,14 @@ MODERATOR_PROMPT = (
 )
 
 
+logger = logging.getLogger(__name__)
+
+# Keep this small or other stocks' lessons drown out this one's own history.
+_CROSS_TICKER_K = 3
+
+
 def _validate_decision(obj: dict) -> str | None:
-    # Semantic gate on the moderator's verdict. This is the single most important
-    # LLM output in the system — everything downstream (the recommendation, the
-    # stored history, the next run's memory) is built from it. A silent fallback
-    # to HOLD/LOW here is indistinguishable from a genuine HOLD, so we insist the
-    # model produces a well-formed verdict and only fall back once retries fail.
+    # A fallback HOLD looks identical to a real one, so make the model get it right.
     if obj.get("decision") not in ("BUY", "HOLD", "SELL"):
         return "The 'decision' field must be exactly one of BUY, HOLD or SELL."
     if obj.get("confidence") not in ("LOW", "MEDIUM", "HIGH"):
@@ -80,9 +88,7 @@ def _validate_decision(obj: dict) -> str | None:
 
 
 def _rebuttal_prompt(stance: str, goal: str) -> str:
-    # System prompt for a rebuttal turn. The analyst sees the opponent's latest
-    # argument and must counter it — and honestly signal whether the debate still
-    # has anywhere to go, which is what lets the loop exit early on convergence.
+    # has_new_points/concede are what let the debate loop stop early.
     return (
         f"You are the {stance} analyst at AlphaForge in a live investment debate. "
         f"You are arguing the {goal} case. You are now shown the opposing analyst's "
@@ -141,12 +147,84 @@ class DebateAgentService:
             context["news"] = None
         return context
 
+    @staticmethod
+    def _situation_query(context: dict | None) -> str:
+        # Describe the setup in words (no company name) to find lessons from similar trades.
+        ctx = context or {}
+        parts: list[str] = []
+
+        sector = (ctx.get("profile") or {}).get("sector") or ctx.get("sector")
+        if sector:
+            parts.append(f"{sector} sector")
+
+        t = ctx.get("technical") or {}
+        price, e20, e50 = t.get("price"), t.get("ema_20"), t.get("ema_50")
+        if price and e20 and e50:
+            if price > e20 > e50:
+                parts.append("uptrend, price above EMA20 and EMA50")
+            elif price < e20 < e50:
+                parts.append("downtrend, price below EMA20 and EMA50")
+            else:
+                parts.append("choppy trend, mixed EMA alignment")
+
+        rsi = t.get("rsi")
+        if rsi is not None:
+            parts.append(
+                f"RSI {round(rsi)} overbought" if rsi >= 70
+                else f"RSI {round(rsi)} oversold" if rsi <= 30
+                else f"RSI {round(rsi)} neutral momentum"
+            )
+
+        macd = t.get("macd")
+        if macd is not None:
+            parts.append(f"{'positive' if macd >= 0 else 'negative'} MACD")
+
+        adx = t.get("adx")
+        if adx is not None:
+            parts.append("strong trend" if adx >= 25 else "weak or ranging trend")
+
+        # Debate calls it "fundamentals", the workflow calls it "fundamental" — accept both.
+        health = (
+            (ctx.get("fundamentals") or {}).get("health")
+            or (ctx.get("fundamental") or {}).get("health")
+            or {}
+        )
+        if health.get("label"):
+            parts.append(f"{str(health['label']).lower()} financial health")
+
+        if not parts:
+            return "trading lessons and mistakes from past closed trades"
+        return "trading lessons for a setup like: " + ", ".join(parts)
+
+    @staticmethod
+    async def _lesson_status(recalled_any: bool, user_id: str) -> str:
+        # Say WHY recall is empty: nothing learned yet, or the index is broken.
+        # Mongo is the source of truth here since it never touches FAISS.
+        if recalled_any:
+            return "ok"
+        try:
+            stored = await MemoryService.recent(type="lesson", user_id=user_id, limit=20)
+        except Exception:
+            logger.exception("Could not read stored lessons to diagnose empty recall")
+            return "unknown"
+        if not stored:
+            return "no_lessons_yet"
+
+        # Lessons exist in Mongo but weren't found in FAISS — a recorded error tells us why.
+        degraded = any(e.metadata.get("_index_error") for e in stored)
+        status = "index_degraded" if degraded else "index_unavailable"
+        logger.warning(
+            "Learning loop %s: %d stored lesson(s) for %s, none searchable in FAISS "
+            "(index_exists=%s)",
+            status, len(stored), user_id, MemoryService.index_exists(),
+        )
+        return status
+
     @classmethod
-    async def _recall_memory(cls, ticker: str, user_id: str = "default_user") -> dict:
-        # Close the learning loop: before arguing the case, pull what AlphaForge
-        # already knows about THIS stock — lessons distilled from past closed
-        # trades and the recommendations it issued before — so today's decision is
-        # informed by prior outcomes instead of starting from a blank slate.
+    async def _recall_memory(
+        cls, ticker: str, user_id: str = "default_user", context: dict | None = None
+    ) -> dict:
+        # Pull what we've learned about this stock before arguing the case.
         ticker = ticker.upper()
         try:
             lessons = await MemoryService.search(
@@ -155,6 +233,28 @@ class DebateAgentService:
             )
         except Exception:
             lessons = []
+
+        # Also pull lessons from other stocks in a similar setup — a mistake costs the same anywhere.
+        seen = {l.get("id") for l in lessons}
+        cross: list[dict] = []
+        try:
+            hits = await MemoryService.search(
+                cls._situation_query(context),
+                # Fetch extra since same-ticker hits and duplicates get dropped below.
+                k=_CROSS_TICKER_K + len(seen) + 2,
+                type="lesson", user_id=user_id,
+            )
+            for h in hits:
+                if h.get("id") in seen or (h.get("ticker") or "").upper() == ticker:
+                    continue
+                seen.add(h.get("id"))
+                cross.append({"ticker": h.get("ticker"), "content": h["content"]})
+                if len(cross) >= _CROSS_TICKER_K:
+                    break
+        except Exception:
+            cross = []
+
+        status = await cls._lesson_status(bool(lessons or cross), user_id)
 
         try:
             past = (
@@ -175,7 +275,10 @@ class DebateAgentService:
 
         return {
             "prior_lessons": [l["content"] for l in lessons],
+            # Kept separate — these happened to other stocks, not this one.
+            "cross_ticker_lessons": cross,
             "past_recommendations": past_recs,
+            "status": status,
         }
     
     @classmethod
@@ -227,8 +330,7 @@ class DebateAgentService:
                 "rebuttals": [result["content"].strip()],
                 "arguments": own_last.get("arguments", []),
                 "key_point": own_last.get("key_point", ""),
-                # If the model returned unparseable output, assume it had nothing
-                # new to add so the debate can converge rather than loop pointlessly.
+                # If the reply was unparseable, assume nothing new so the debate can end.
                 "has_new_points": False,
                 "concede": False,
             },
@@ -236,17 +338,17 @@ class DebateAgentService:
 
     @classmethod
     async def debate(
-        cls, ticker: str, include_news: bool = True, max_rounds: int = 2
+        cls, ticker: str, include_news: bool = True, max_rounds: int = 2,
+        risk: dict | None = None,
     ) -> dict:
         try:
             context = await cls._gather_context(ticker, include_news)
-            # Recall prior lessons + past calls on this ticker so the committee
-            # argues with memory of what happened last time, not from scratch.
-            context["memory"] = await cls._recall_memory(ticker)
+            if risk:
+                context["risk"] = risk
+            # Recall past lessons and calls so the committee argues with memory, not blind.
+            context["memory"] = await cls._recall_memory(ticker, context=context)
 
-            # Run the multi-round debate loop: opening -> (rebut -> rebut -> ...) ->
-            # moderate. The graph cycles on the "rebut" node until the analysts
-            # converge (concede / no new points) or max_rounds is reached.
+            # Loop: opening -> rebuttals -> moderate, cycling until they converge or hit max_rounds.
             final = await _debate_graph.ainvoke(
                 {
                     "ticker": ticker.upper(),
@@ -275,30 +377,26 @@ class DebateAgentService:
 
     @classmethod
     async def debate_stream(
-        cls, ticker: str, include_news: bool = True, max_rounds: int = 2
+        cls, ticker: str, include_news: bool = True, max_rounds: int = 2,
+        risk: dict | None = None,
     ):
-        """Async generator that yields the debate as it unfolds, round by round.
-
-        Same loop as `debate()`, but instead of returning only the final result it
-        streams a semantic event after each phase — evidence gathered, memory
-        recalled, opening statements, every rebuttal round, and the moderator's
-        verdict — so the UI can render the committee arguing live.
-        """
+        """Same as debate() but yields an event after each phase so the UI can show it live."""
         ticker = ticker.upper()
         try:
             yield {"type": "status", "phase": "evidence",
                    "message": f"Gathering evidence for {ticker}…"}
             context = await cls._gather_context(ticker, include_news)
+            if risk:
+                context["risk"] = risk
 
-            memory = await cls._recall_memory(ticker)
+            memory = await cls._recall_memory(ticker, context=context)
             context["memory"] = memory
             yield {"type": "memory", "memory": memory}
 
             yield {"type": "status", "phase": "debate",
                    "message": "Committee convening — opening statements…"}
 
-            # stream_mode="updates" emits each node's return as it completes, which
-            # is exactly one debate phase per event.
+            # "updates" mode emits one event per node as it finishes.
             async for update in _debate_graph.astream(
                 {"ticker": ticker, "context": context, "max_rounds": max(1, max_rounds)},
                 stream_mode="updates",
@@ -321,10 +419,7 @@ class DebateAgentService:
             yield {"type": "error", "message": str(e)}
 
 
-# --- Multi-round debate loop (LangGraph cycle) ------------------------------
-# opening -> should_continue? -> rebut -> should_continue? -> ... -> moderate
-# The conditional edge is the loop: it routes back to "rebut" until the two
-# analysts converge or the round cap is hit, then hands off to the moderator.
+# Debate loop: opening -> rebut -> ... -> moderate, looping on rebut until they converge.
 
 class DebateState(TypedDict, total=False):
     ticker: str
@@ -343,7 +438,7 @@ class DebateState(TypedDict, total=False):
 
 async def _opening_node(state: DebateState) -> dict:
     ctx, ticker = state["context"], state["ticker"]
-    # Bull and Bear open independently — run them concurrently.
+    # Bull and Bear open independently, so run them at the same time.
     bull, bear = await asyncio.gather(
         DebateAgentService._argue(BULL_PROMPT, ctx, ticker, "BULL"),
         DebateAgentService._argue(BEAR_PROMPT, ctx, ticker, "BEAR"),
@@ -360,7 +455,7 @@ async def _opening_node(state: DebateState) -> dict:
 async def _rebut_node(state: DebateState) -> dict:
     ctx, ticker = state["context"], state["ticker"]
     bull_prev, bear_prev = state["bull"], state["bear"]
-    # Each side rebuts the OTHER side's most recent argument, concurrently.
+    # Each side rebuts the other's latest argument, at the same time.
     bull, bear = await asyncio.gather(
         DebateAgentService._rebut("BULL", "BUY", ctx, ticker, bull_prev, bear_prev),
         DebateAgentService._rebut("BEAR", "SELL or AVOID", ctx, ticker, bear_prev, bull_prev),
@@ -381,7 +476,7 @@ async def _rebut_node(state: DebateState) -> dict:
 
 
 def _should_continue(state: DebateState) -> str:
-    # The loop's exit test: stop once the sides converge or the cap is reached.
+    # Stop once the sides converge or we hit the round cap.
     if state.get("converged"):
         return "moderate"
     if state["round"] >= state.get("max_rounds", 2):
@@ -422,8 +517,7 @@ async def _moderate_node(state: DebateState) -> dict:
         temperature=0.3,
         validate=_validate_decision,
     )
-    # Surface whether the verdict is real or a fallback, so callers can tell a
-    # genuine HOLD apart from a parse failure instead of guessing.
+    # decision_valid=False means this HOLD is a fallback, not a real verdict.
     return {
         "decision": result["data"],
         "model": result["model"],
@@ -439,8 +533,7 @@ def _build_debate_graph():
     g.add_node("moderate", _moderate_node)
 
     g.add_edge(START, "opening")
-    # The conditional edges ARE the loop: opening/rebut both route to either
-    # another rebuttal round or the moderator.
+    # These conditional edges form the loop back to rebut, or exit to moderate.
     g.add_conditional_edges("opening", _should_continue,
                             {"rebut": "rebut", "moderate": "moderate"})
     g.add_conditional_edges("rebut", _should_continue,

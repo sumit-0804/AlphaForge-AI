@@ -7,6 +7,7 @@ from cachetools import TTLCache
 
 from app.services.trading import TradingService
 from app.services.market_data import MarketDataService
+from app.core.exchanges import benchmark_for_ticker
 
 risk_cache = TTLCache(maxsize=32, ttl=300)
 TRADING_DAYS = 252
@@ -26,7 +27,7 @@ def _beta(asset_ret: pd.Series, bench_ret: pd.Series) -> float | None:
 
 def _risk_level(vol: float | None, beta: float | None) -> str:
     # vol is a fraction (0.22 == 22% annualized).
-    if vol is None:
+    if vol is None or pd.isna(vol):
         return "UNKNOWN"
     if vol < 0.15 and (beta or 0) < 1:
         return "LOW"
@@ -36,8 +37,7 @@ def _risk_level(vol: float | None, beta: float | None) -> str:
 
 
 class RiskService:
-    # portfolio-level volatility / beta / Sharpe + sector exposure,
-    # computed from ~1y of daily returns against a market benchmark.
+    # Portfolio volatility, beta, Sharpe and sector exposure from ~1y of daily returns.
 
     @staticmethod
     def _price_history(tickers: list[str], period: str) -> dict[str, pd.Series]:
@@ -46,7 +46,12 @@ class RiskService:
             try:
                 h = yf.Ticker(t).history(period=period)
                 if not h.empty:
-                    closes[t] = h["Close"]
+                    close = h["Close"]
+                    # Index to calendar date: US and Indian series carry different
+                    # timezones, so without this a mixed book fails to align and
+                    # every cross-market join drops to NaN.
+                    close.index = close.index.tz_localize(None).normalize()
+                    closes[t] = close
             except Exception:
                 continue
         return closes
@@ -56,9 +61,17 @@ class RiskService:
         positions = summary["positions"]
         total_equity = sum(p["current_value"] for p in positions)
 
-        closes = cls._price_history([p["ticker"] for p in positions] + [benchmark], period)
-        bench_close = closes.get(benchmark)
-        bench_ret = bench_close.pct_change(fill_method=None).dropna() if bench_close is not None else None
+        # Fetch every position plus each benchmark we need: one per position's own
+        # market, and the portfolio-level index for the aggregate beta.
+        tickers = [p["ticker"] for p in positions]
+        benches = {benchmark_for_ticker(t) for t in tickers} | {benchmark}
+        closes = cls._price_history(tickers + sorted(benches), period)
+
+        def _ret(series):
+            return series.pct_change(fill_method=None).dropna() if series is not None else None
+
+        bench_rets = {b: _ret(closes.get(b)) for b in benches}
+        bench_ret = bench_rets.get(benchmark)   # portfolio-level index
 
         per_position: list[dict] = []
         ret_frame: dict[str, pd.Series] = {}
@@ -83,7 +96,9 @@ class RiskService:
 
             r = c.pct_change(fill_method=None).dropna()
             ret_frame[t] = r
-            beta = _beta(r, bench_ret) if bench_ret is not None else None
+            # Each name's beta is measured against its OWN market index.
+            own_bench = bench_rets.get(benchmark_for_ticker(t))
+            beta = _beta(r, own_bench) if own_bench is not None else None
             per_position.append({
                 "ticker": t,
                 "sector": sector,
@@ -94,8 +109,9 @@ class RiskService:
             })
 
         portfolio_metrics = None
-        if ret_frame:
-            R = pd.DataFrame(ret_frame).dropna()
+        R = pd.DataFrame(ret_frame).dropna() if ret_frame else pd.DataFrame()
+        # Need at least two overlapping days across the priced names to say anything.
+        if len(R) >= 2:
             wvec = pd.Series({t: weights[t] for t in R.columns})
             wvec = wvec / wvec.sum()                     # renormalize over priced names
             port_ret = R.mul(wvec, axis=1).sum(axis=1)
@@ -126,6 +142,36 @@ class RiskService:
                 for sec, val in sector_value.items()
             },
         }
+
+    @classmethod
+    def _compute_ticker(cls, ticker: str, benchmark: str, period: str) -> dict:
+        closes = cls._price_history([ticker, benchmark], period)
+        c = closes.get(ticker)
+        if c is None:
+            return {"ticker": ticker, "volatility": None, "beta": None,
+                    "risk_level": "UNKNOWN", "benchmark": benchmark}
+        r = c.pct_change(fill_method=None).dropna()
+        bench = closes.get(benchmark)
+        bench_ret = bench.pct_change(fill_method=None).dropna() if bench is not None else None
+        vol = _annualized_vol(r)
+        beta = _beta(r, bench_ret) if bench_ret is not None else None
+        return {
+            "ticker": ticker,
+            "volatility": round(vol * 100, 2),
+            "beta": round(beta, 3) if beta is not None else None,
+            "risk_level": _risk_level(vol, beta),
+            "benchmark": benchmark,
+        }
+
+    @classmethod
+    async def analyze_ticker(
+        cls, ticker: str, benchmark: str | None = None, period: str = "1y"
+    ) -> dict:
+        # Single-stock risk (volatility, beta, level) — no portfolio needed.
+        # Default the benchmark to the ticker's own market index (Nifty for IN, S&P for US).
+        ticker = ticker.upper()
+        bench = benchmark or benchmark_for_ticker(ticker)
+        return await asyncio.to_thread(cls._compute_ticker, ticker, bench, period)
 
     @classmethod
     async def analyze(

@@ -9,9 +9,7 @@ router = APIRouter(prefix="/debate", tags=["Debate Agents"])
 
 @router.get("/{ticker}/stream")
 async def debate_stream(ticker: str, news: bool = True, rounds: int = 2):
-    # Server-Sent Events: streams the debate live, one event per phase (evidence,
-    # memory, opening, each rebuttal round, moderator decision), so the frontend
-    # committee view can render the argument as it happens.
+    # Streams the debate live, one event per phase, for the committee view.
     rounds = max(1, min(rounds, 5))
 
     async def event_source():

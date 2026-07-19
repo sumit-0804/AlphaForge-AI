@@ -75,12 +75,7 @@ def news_country(ticker: str) -> str:
     return get_exchange(ticker).country
 
 
-# --- Market sessions -------------------------------------------------------
-# Local trading hours per market, in the market's OWN timezone. Storing them
-# this way (rather than as fixed IST offsets) means DST is handled for us: the
-# US session shifts against IST twice a year, and ZoneInfo tracks that. A user
-# in Kolkata sees the US open at 19:00 IST in summer and 20:00 in winter without
-# any of these numbers changing.
+# Trading hours in each market's own timezone so DST is handled automatically.
 
 @dataclass(frozen=True)
 class Market:
@@ -89,30 +84,31 @@ class Market:
     timezone: str
     open: time
     close: time
+    # Index used as the beta benchmark for this market's stocks.
+    benchmark: str
     # Weekday indices the market trades on (Mon=0). Both markets are Mon-Fri.
     weekdays: tuple[int, ...] = (0, 1, 2, 3, 4)
 
 
 MARKETS: dict[str, Market] = {
-    "IN": Market("IN", "NSE / BSE", "Asia/Kolkata", time(9, 15), time(15, 30)),
-    "US": Market("US", "NASDAQ / NYSE", "America/New_York", time(9, 30), time(16, 0)),
+    "IN": Market("IN", "NSE / BSE", "Asia/Kolkata", time(9, 15), time(15, 30), "^NSEI"),
+    "US": Market("US", "NASDAQ / NYSE", "America/New_York", time(9, 30), time(16, 0), "^GSPC"),
 }
 
 
 def market_for_ticker(ticker: str) -> str:
-    # ".NS"/".BO" -> IN, bare tickers -> US. Anything else falls back to US
-    # since that is the default yfinance namespace.
+    # .NS/.BO map to India; everything else defaults to US.
     _, suffix = split_ticker(ticker)
     return "IN" if suffix in ("NS", "BO") else "US"
 
 
-def market_status(key: str, now: datetime | None = None) -> dict:
-    """Whether a market is currently open, plus its local time.
+def benchmark_for_ticker(ticker: str) -> str:
+    # Nifty 50 for Indian names, S&P 500 for US — beta against a foreign index is meaningless.
+    return MARKETS[market_for_ticker(ticker)].benchmark
 
-    Note this covers regular weekday sessions only — it does not know about
-    exchange holidays, so a holiday will still report "open" during session
-    hours. Treat it as a scheduling hint, not a trading calendar.
-    """
+
+def market_status(key: str, now: datetime | None = None) -> dict:
+    """Whether a market is open now plus its local time (ignores holidays)."""
     m = MARKETS[key]
     tz = ZoneInfo(m.timezone)
     local = (now or datetime.now(tz)).astimezone(tz)

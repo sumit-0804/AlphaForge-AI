@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from fastapi import HTTPException
 from typing import List
 from app.models.trading import Portfolio, Transaction, Position
@@ -8,17 +9,28 @@ from app.core.config import settings
 from app.core.exchanges import currency_for_ticker
 from app.agents.reflection_agent import ReflectionAgentService
 
+logger = logging.getLogger(__name__)
+
 _bg_tasks: set = set()
 async def _safe_reflect(user_id: str, ticker: str, quantity: int, buy_price: float, sell_price: float) -> None:
+    # Runs after the trade is saved, so never raise — but log loudly, since this is
+    # the only thing that writes lessons.
     try:
-        await ReflectionAgentService.reflect(ticker, quantity, buy_price, sell_price, user_id)
+        result = await ReflectionAgentService.reflect(
+            ticker, quantity, buy_price, sell_price, user_id
+        )
+        if result.get("stored"):
+            logger.info("Reflection stored a lesson for %s (%s shares)", ticker, quantity)
+        else:
+            logger.warning(
+                "Reflection for %s stored no lesson (valid=%s)", ticker, result.get("valid")
+            )
     except Exception:
-        pass 
+        logger.exception("Reflection FAILED for %s — no lesson written", ticker)
 
 
 def _position_currency(pos: Position) -> str:
-    # Positions opened before currency support carry no code; the ticker suffix
-    # is authoritative enough to backfill one.
+    # Old positions have no currency code; fall back to the ticker suffix.
     return normalize(pos.currency or currency_for_ticker(pos.ticker))[0]
 
 
@@ -36,8 +48,7 @@ class TradingService:
             await portfolio.insert()
 
         if not portfolio.base_currency:
-            # Pre-existing book: adopt the configured base rather than leaving
-            # the denomination undefined.
+            # Old book with no base set; adopt the configured default.
             portfolio.base_currency = settings.base_currency
             await portfolio.save()
 
@@ -48,8 +59,7 @@ class TradingService:
         portfolio = await TradingService.get_portfolio(user_id)
         base = portfolio.base_currency or settings.base_currency
 
-        # One rate per distinct listing currency, fetched concurrently — not one
-        # lookup per position.
+        # One rate per currency, not per position.
         rates = await ForexService.rates_to_base(
             {_position_currency(p) for p in portfolio.positions}, base
         )
@@ -63,8 +73,7 @@ class TradingService:
             native = _position_currency(pos)
             try:
                 stock_info = MarketDataService.get_stock_info(pos.ticker)
-                # Fold minor units (pence) into the price so it is directly
-                # comparable with the stored average_buy_price.
+                # Convert pence etc. to major units to match the stored buy price.
                 current_price, _ = major_units(
                     stock_info.get("currentPrice"), stock_info.get("currency")
                 )
@@ -73,23 +82,21 @@ class TradingService:
             except Exception:
                 current_price = pos.average_buy_price
 
-            # --- native currency: what the exchange quotes -------------------
+            # In the stock's own currency.
             current_value = pos.quantity * current_price
             cost_native = pos.quantity * pos.average_buy_price
             pnl = current_value - cost_native
             pnl_percent = (pnl / cost_native) * 100 if cost_native > 0 else 0
 
-            # --- base currency: what the book is worth ------------------------
+            # Converted to the book's base currency.
             rate = rates.get(native)
             cost_base = pos.cost_basis_base
             if cost_base is None:
-                # Legacy position: no recorded cash outlay. Best available proxy
-                # is today's rate on the native cost.
+                # Old position with no recorded outlay; approximate at today's rate.
                 cost_base = cost_native * rate if rate is not None else None
 
             if rate is None:
-                # Refuse to guess. The position still renders in its own
-                # currency; it just cannot join the base-currency total.
+                # No rate, so leave it out of the base total rather than guess.
                 current_value_base = None
                 unconverted.append(pos.ticker)
             else:
@@ -107,7 +114,7 @@ class TradingService:
                 "current_value": round(current_value, 2),
                 "pnl": round(pnl, 2),
                 "pnl_percent": round(pnl_percent, 2),
-                # Base-currency mirrors, so the UI never has to do FX itself.
+                # Base-currency values so the UI doesn't have to convert.
                 "base_currency": base,
                 "fx_rate": round(rate, 6) if rate is not None else None,
                 "current_value_base": (
@@ -121,9 +128,7 @@ class TradingService:
                 ),
             })
 
-        # P&L against what was actually spent plus cash still on hand, rather
-        # than a hardcoded 100000 — the seed is only correct for a fresh book in
-        # the base currency, and says nothing once FX is involved.
+        # P&L vs. what was actually spent plus remaining cash.
         total_pnl = total_value - (portfolio.cash_balance + invested_base)
 
         return {
@@ -132,8 +137,7 @@ class TradingService:
             "cash_balance": round(portfolio.cash_balance, 2),
             "total_portfolio_value": round(total_value, 2),
             "total_pnl": round(total_pnl, 2),
-            # Non-empty when a rate lookup failed: those positions are excluded
-            # from the total, so the UI should say so rather than imply exactness.
+            # Positions left out of the total because their rate lookup failed.
             "unconverted": unconverted,
             "positions": positions_summary,
         }
@@ -158,15 +162,12 @@ class TradingService:
 
         portfolio = await TradingService.get_portfolio(user_id)
         base = portfolio.base_currency or settings.base_currency
-        # Restate to major units first: LSE quotes arrive in pence, and pricing a
-        # pence figure at the GBP rate would inflate the trade 100x.
+        # Convert pence etc. to major units before pricing the trade.
         current_price, native = major_units(
             current_price, stock_info.get("currency") or currency_for_ticker(ticker)
         )
 
-        # The trade is priced in the stock's own currency but settles against a
-        # cash balance held in `base`. Convert before touching cash — debiting a
-        # ₹ amount from a ₹-denominated balance is only a no-op when they match.
+        # Cash is held in the base currency, so convert the trade before touching it.
         fx_rate = await ForexService.rate(native, base)
         if fx_rate is None:
             raise HTTPException(
@@ -177,8 +178,8 @@ class TradingService:
                 ),
             )
 
-        total_cost = current_price * quantity          # native
-        total_cost_base = total_cost * fx_rate         # what cash actually moves
+        total_cost = current_price * quantity          # in the stock's currency
+        total_cost_base = total_cost * fx_rate         # in the book's currency
 
         pos_index = next((i for i,p in enumerate(portfolio.positions) if p.ticker == ticker), -1)
 
@@ -194,9 +195,7 @@ class TradingService:
                 new_total_quantity = existing_pos.quantity + quantity
                 new_avg_price = (total_value_before + total_cost)/ new_total_quantity
 
-                # A position opened before currency support has no recorded cash
-                # outlay. Treating that as 0 would book the whole original stake
-                # as profit, so approximate it at today's rate instead.
+                # Old position with no recorded outlay; approximate at today's rate.
                 prior_basis = existing_pos.cost_basis_base
                 if prior_basis is None:
                     prior_basis = total_value_before * fx_rate
@@ -222,8 +221,7 @@ class TradingService:
             avg_buy_price = existing_pos.average_buy_price
             portfolio.cash_balance += total_cost_base
 
-            # Retire the sold fraction of the cost basis so a partial sale leaves
-            # the remainder carrying its own share and no more.
+            # Drop the sold share of the cost basis so the rest keeps only its own.
             if existing_pos.cost_basis_base is not None and existing_pos.quantity > 0:
                 sold_fraction = quantity / existing_pos.quantity
                 existing_pos.cost_basis_base -= existing_pos.cost_basis_base * sold_fraction
@@ -235,7 +233,6 @@ class TradingService:
 
         await portfolio.save()
 
-        # Record transaction
         transaction = Transaction(
             user_id=user_id,
             ticker=ticker,
