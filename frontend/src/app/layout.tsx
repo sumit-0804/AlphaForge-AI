@@ -1,37 +1,36 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono, JetBrains_Mono } from "next/font/google";
+import { Geist, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { cn } from "@/lib/utils";
 import { Providers } from "@/components/providers";
 import { Nav } from "@/components/nav";
 
-const jetbrainsMono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono" });
-const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
-const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
+// Monospace is the identity; a clean sans is available for the rare long paragraph.
+const mono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono" });
+const sans = Geist({ subsets: ["latin"], variable: "--font-sans" });
 
 export const metadata: Metadata = {
   title: "AlphaForge AI",
-  description: "Autonomous Investment Research & Paper Trading",
+  description: "Autonomous investment research & paper trading",
 };
 
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
+    // suppressHydrationWarning: next-themes sets the theme class on <html> before paint.
     <html
       lang="en"
-      className={cn(
-        "h-full antialiased font-mono",
-        geistSans.variable,
-        geistMono.variable,
-        jetbrainsMono.variable
-      )}
+      suppressHydrationWarning
+      className={cn("h-full antialiased", mono.variable, sans.variable)}
     >
-      <body className="min-h-full">
+      <body className="min-h-full font-mono">
         <Providers>
-          <div className="flex flex-col md:flex-row min-h-screen">
+          <div className="flex min-h-screen flex-col md:flex-row">
             <Nav />
-            <main className="flex-1 p-4 sm:p-6 md:p-8 overflow-x-hidden">{children}</main>
+            <main className="flex-1 overflow-x-hidden p-4 sm:p-6 lg:p-8">
+              <div className="mx-auto w-full max-w-6xl">{children}</div>
+            </main>
           </div>
         </Providers>
       </body>
