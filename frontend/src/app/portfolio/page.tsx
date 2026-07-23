@@ -1,8 +1,16 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import Link from "next/link";
 import { fetchPortfolio } from "@/lib/api";
 import { currency, percent, pnlClass } from "@/lib/format";
+import { cn } from "@/lib/utils";
+import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Skeleton } from "@/components/ui/skeleton";
+import { StatCard, PageHeader, EmptyState } from "@/components/ui-bits";
+import { TradeDialog } from "@/components/trade-dialog";
 
 export default function PortfolioPage() {
   const { data, isLoading, isError, error } = useQuery({
@@ -12,104 +20,105 @@ export default function PortfolioPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-semibold tracking-tight">Portfolio</h1>
+      <PageHeader title="Portfolio" subtitle="Your paper-trading book, converted to one base currency." />
 
-      {isLoading && <p className="text-muted-foreground">Loading…</p>}
-      {isError && <p className="text-red-600">{(error as Error).message}</p>}
+      {isError && <p className="text-xs text-negative">{(error as Error).message}</p>}
+
+      {isLoading && (
+        <div className="grid gap-4 sm:grid-cols-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} className="h-20 w-full" />
+          ))}
+        </div>
+      )}
 
       {data && (
         <>
           <div className="grid gap-4 sm:grid-cols-3">
-            <div className="rounded-lg border bg-card p-4">
-              <p className="text-xs uppercase text-muted-foreground">
-                Total Value ({data.base_currency})
-              </p>
-              <p className="mt-1 text-2xl font-semibold">
-                {currency(data.total_portfolio_value, data.base_currency)}
-              </p>
-            </div>
-            <div className="rounded-lg border bg-card p-4">
-              <p className="text-xs uppercase text-muted-foreground">Cash</p>
-              <p className="mt-1 text-2xl font-semibold">
-                {currency(data.cash_balance, data.base_currency)}
-              </p>
-            </div>
-            <div className="rounded-lg border bg-card p-4">
-              <p className="text-xs uppercase text-muted-foreground">Total P&L</p>
-              <p className={`mt-1 text-2xl font-semibold ${pnlClass(data.total_pnl)}`}>
-                {currency(data.total_pnl, data.base_currency)}
-              </p>
-            </div>
+            <StatCard label={`Total value (${data.base_currency})`} value={currency(data.total_portfolio_value, data.base_currency)} />
+            <StatCard label="Cash" value={currency(data.cash_balance, data.base_currency)} />
+            <StatCard
+              label="Total P&L"
+              value={currency(data.total_pnl, data.base_currency)}
+              tone={data.total_pnl > 0 ? "positive" : data.total_pnl < 0 ? "negative" : "default"}
+            />
           </div>
 
           {data.unconverted.length > 0 && (
-            <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-400">
-              No exchange rate available for {data.unconverted.join(", ")} — excluded
-              from the {data.base_currency} total above.
+            <p className="bg-amber-500/10 px-4 py-3 text-xs text-amber-600 ring-1 ring-inset ring-amber-500/25 dark:text-amber-400">
+              No exchange rate available for {data.unconverted.join(", ")} — excluded from the{" "}
+              {data.base_currency} total above.
             </p>
           )}
 
-          <div className="overflow-x-auto rounded-lg border bg-card">
-            <table className="w-full text-sm">
-              <thead className="text-left text-muted-foreground">
-                <tr className="border-b">
-                  <th className="px-4 py-3 font-medium">Ticker</th>
-                  <th className="px-4 py-3 font-medium text-right">Qty</th>
-                  <th className="px-4 py-3 font-medium text-right">Avg Buy</th>
-                  <th className="px-4 py-3 font-medium text-right">Current</th>
-                  <th className="px-4 py-3 font-medium text-right">Value</th>
-                  <th className="px-4 py-3 font-medium text-right">
-                    Value ({data.base_currency})
-                  </th>
-                  <th className="px-4 py-3 font-medium text-right">P&L</th>
-                  <th className="px-4 py-3 font-medium text-right">P&L %</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.positions.length === 0 ? (
-                  <tr>
-                    <td colSpan={8} className="px-4 py-10 text-center text-muted-foreground">
-                      No open positions.
-                    </td>
-                  </tr>
-                ) : (
-                  data.positions.map((p) => (
-                    <tr key={p.ticker} className="border-b last:border-0">
-                      <td className="px-4 py-3 font-medium">
-                        {p.ticker}
-                        <span className="ml-2 text-xs text-muted-foreground">{p.currency}</span>
-                      </td>
-                      <td className="px-4 py-3 text-right">{p.quantity}</td>
-                      {/* Prices stay in the stock's own currency so they match
-                          what the exchange and a broker statement show. */}
-                      <td className="px-4 py-3 text-right">
-                        {currency(p.average_buy_price, p.currency)}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        {currency(p.current_price, p.currency)}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        {currency(p.current_value, p.currency)}
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        {p.current_value_base == null ? (
-                          <span className="text-muted-foreground" title="No exchange rate available">
-                            —
-                          </span>
-                        ) : (
-                          currency(p.current_value_base, p.base_currency)
-                        )}
-                      </td>
-                      <td className={`px-4 py-3 text-right ${pnlClass(p.pnl)}`}>
-                        {currency(p.pnl, p.currency)}
-                      </td>
-                      <td className={`px-4 py-3 text-right ${pnlClass(p.pnl)}`}>{percent(p.pnl_percent)}</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+          <Card className="p-0">
+            {data.positions.length === 0 ? (
+              <EmptyState
+                title="No open positions."
+                hint={
+                  <>
+                    Head to <Link href="/market" className="text-primary hover:underline">Market</Link> to buy.
+                  </>
+                }
+              />
+            ) : (
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Ticker</TableHead>
+                      <TableHead className="text-right">Qty</TableHead>
+                      <TableHead className="text-right">Avg buy</TableHead>
+                      <TableHead className="text-right">Current</TableHead>
+                      <TableHead className="text-right">Value</TableHead>
+                      <TableHead className="text-right">Value ({data.base_currency})</TableHead>
+                      <TableHead className="text-right">P&L</TableHead>
+                      <TableHead className="text-right">P&L %</TableHead>
+                      <TableHead className="text-right">Trade</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {data.positions.map((p) => (
+                      <TableRow key={p.ticker}>
+                        <TableCell className="font-medium">
+                          <Link href={`/market?ticker=${p.ticker}`} className="hover:text-primary hover:underline">
+                            {p.ticker}
+                          </Link>
+                          <span className="ml-2 text-[11px] text-muted-foreground">{p.currency}</span>
+                        </TableCell>
+                        <TableCell className="tabular text-right">{p.quantity}</TableCell>
+                        <TableCell className="tabular text-right">{currency(p.average_buy_price, p.currency)}</TableCell>
+                        <TableCell className="tabular text-right">{currency(p.current_price, p.currency)}</TableCell>
+                        <TableCell className="tabular text-right">{currency(p.current_value, p.currency)}</TableCell>
+                        <TableCell className="tabular text-right">
+                          {p.current_value_base == null ? (
+                            <span className="text-muted-foreground" title="No exchange rate available">—</span>
+                          ) : (
+                            currency(p.current_value_base, p.base_currency)
+                          )}
+                        </TableCell>
+                        <TableCell className={cn("tabular text-right", pnlClass(p.pnl))}>{currency(p.pnl, p.currency)}</TableCell>
+                        <TableCell className={cn("tabular text-right", pnlClass(p.pnl))}>{percent(p.pnl_percent)}</TableCell>
+                        <TableCell className="text-right">
+                          <TradeDialog
+                            ticker={p.ticker}
+                            currency={p.currency}
+                            currentPrice={p.current_price}
+                            maxSell={p.quantity}
+                            trigger={
+                              <Button variant="outline" size="xs">
+                                Trade
+                              </Button>
+                            }
+                          />
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </Card>
         </>
       )}
     </div>
