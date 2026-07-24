@@ -1,0 +1,11 @@
+node_modules/
+.next/
+out/
+.env.local
+.env*.local
+tsconfig.tsbuildinfo
+.git/
+.gitignore
+README.md
+AGENTS.md
+CLAUDE.md
