@@ -46,6 +46,6 @@ class Settings(BaseSettings):
 
     @property
     def jwt_secret_is_default(self) -> bool:
-        return self.jwt_secret == "dev-only-insecure-change-me"
+        return self.jwt_secret == "mysecret"
 
 settings = Settings()
