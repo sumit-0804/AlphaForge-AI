@@ -165,10 +165,45 @@ the round cap is hit. `moderate` issues the final verdict, which is validated
 rather than silently falling back, so a real HOLD is distinguishable from a
 parse failure.
 
+## Accounts
+
+Every book, lesson, memory and past recommendation belongs to one account. The API
+carries no ambient identity: `user_id` comes from the bearer token on the request
+and nothing else, so there is no code path that reads or writes another user's data.
+
+| Endpoint | Public? |
+| --- | --- |
+| `POST /api/auth/register` | yes, unless `ALLOW_REGISTRATION=false` |
+| `POST /api/auth/login` | yes |
+| `GET /api/health` | yes — uptime pings need it |
+| everything else | bearer token required |
+
+Registration creates the opening paper-trading book in the same request, so a fresh
+account's first portfolio read isn't a special case. Passwords are bcrypt-hashed
+(SHA-256 pre-folded, since bcrypt ignores anything past 72 bytes); sessions are
+HS256 JWTs signed with `JWT_SECRET`.
+
+Two consequences worth knowing:
+
+- **Scheduled jobs fan out.** A scan is market-wide, so it runs once and files its
+  result into every active user's memory. The daily report is per-book, so
+  `run_daily_report_all` iterates active users. Triggering `daily_report` by hand
+  from `/api/scheduler/run/...` reports on the caller's book only.
+- **There is no token revocation.** Changing a password stops future logins with the
+  old one but doesn't invalidate tokens already issued — they run out at
+  `ACCESS_TOKEN_TTL_MINUTES`. Deactivating a user (`is_active=false`) *does* take
+  effect immediately, since every request re-reads the account.
+
+The client keeps its token in `localStorage` rather than an httpOnly cookie, because
+the frontend and API sit on different origins and cookies would have to be
+`SameSite=None`. That trades CSRF exposure for XSS exposure — the right call for a
+paper-trading app holding no money and no PII, and worth revisiting if that changes.
+
 ## Frontend
 
-Six pages, deliberately consolidated — the expensive analysis pipeline is reachable
-from exactly two places (discovery and direct search) rather than scattered:
+Seven pages — six behind the session gate, plus `/login`. The expensive analysis
+pipeline is reachable from exactly two places (discovery and direct search) rather
+than scattered:
 
 | Route | What it's for |
 | --- | --- |
@@ -178,6 +213,7 @@ from exactly two places (discovery and direct search) rather than scattered:
 | `/analyze` | Run the full pipeline on any ticker; scheduler jobs + past calls |
 | `/portfolio` | Full book with native *and* base-currency columns; inline trade |
 | `/transactions` | Executed paper trades |
+| `/login` | Sign in / create an account — the only route outside the app frame |
 
 The committee debate is **not** its own page — it's a phase of the analysis
 pipeline, so it renders live inside `/scanner` and `/analyze` wherever a run takes
@@ -188,7 +224,15 @@ Notes worth knowing:
 
 - **Streaming.** `/analyze` and `/scanner` consume Server-Sent Events directly
   (`streamWorkflow` / `streamDebate` in `src/lib/api.ts`), rendering each pipeline
-  node, every debate round, and the final recommendation as they arrive.
+  node, every debate round, and the final recommendation as they arrive. These use
+  `fetch` rather than `EventSource` specifically because `EventSource` can't send
+  headers — the bearer token would have to go in the query string, and from there
+  into access logs.
+- **The gate is `AppShell`, not middleware.** It decides between the sign-in screen,
+  a spinner while the stored token is checked, and the app frame. It's a
+  convenience only: the API rejects unauthenticated requests either way. Signing out
+  clears the React Query cache, so the next account can't read the previous one's
+  portfolio out of it.
 - **Currency is never assumed.** `currency()` requires an explicit code at the
   call site — a defaulted `"USD"` is what once made ₹ positions render as dollars.
   INR uses `en-IN` lakh/crore grouping. Positions show their listing currency next
@@ -236,15 +280,23 @@ and the trade-close reflection path.
 
 ```powershell
 cd backend
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+uv sync
 copy .env.example .env
-uvicorn app.main:app --reload --port 8000
+uv run uvicorn app.main:app --reload --port 8000
 ```
 
-Set `GOOGLE_API_KEY` in `backend/.env` — it powers both the reasoning agents and
-the FAISS memory embeddings.
+Two values in `backend/.env` need filling in:
+
+- `GOOGLE_API_KEY` — powers both the reasoning agents and the FAISS memory embeddings.
+- `JWT_SECRET` — signs session tokens. Generate one per environment with
+  `python -c "import secrets; print(secrets.token_urlsafe(48))"`. Leaving it unset
+  falls back to a value published in this repo, so anyone could forge a token for any
+  account; the server logs a warning at startup when that happens.
+
+Note the CORS variable is `CORS_ORIGIN`, **singular** — `Settings.cors_origin` is the
+field name, so a plural `CORS_ORIGINS` is silently ignored and the backend keeps its
+`localhost:3000` default. Deployed, that shows up as the browser blocking every
+request from the frontend.
 
 ### Frontend
 
