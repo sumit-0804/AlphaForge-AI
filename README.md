@@ -4,7 +4,8 @@ Local-first autonomous investment research & paper trading platform.
 
 ## Stack
 
-- Frontend: Next.js, TypeScript, TailwindCSS
+- Frontend: Next.js 16 (App Router) + React 19, TypeScript, Tailwind v4, shadcn/ui
+  (base-lyra, on Base UI), TanStack Query, Zustand, lightweight-charts
 - Backend: FastAPI, Python 3.12
 - Database: MongoDB (Beanie) + FAISS (vector memory)
 - AI: Google Gemini + LangGraph
@@ -25,13 +26,19 @@ of each agent is very different:
 | --- | --- | --- |
 | Scanner triage | Scanner page / scheduled scan | 1 call per scan |
 | Portfolio advisor | Scanner page | 1 call per book |
-| LangGraph workflow | User picks a candidate | ~15 calls per ticker |
+| LangGraph workflow | Scanner candidate, or a direct search on Analyze | ~15 calls per ticker |
 | Reflection | A paper trade is closed | 1 call per closed trade |
 | Risk + allocation narration | Daily report, 16:00 IST | 2 calls per day |
 
-That gap is why scanning is tiered — running the full workflow across a 45-name
-universe would be ~700 model calls, so the scan shortlists cheaply and the user
-chooses which candidates earn the expensive analysis.
+That gap is why scanning is tiered — running the full workflow across a whole
+universe would be hundreds of model calls, so the scan shortlists cheaply and the
+user chooses which candidates earn the expensive analysis.
+
+Every outbound model call also passes through a shared sliding-window rate
+limiter (`app/core/ratelimit.py`) that enforces both requests- and
+tokens-per-minute against the provider quota. Chat and embeddings have separate
+budgets; token cost is estimated up front and then corrected with the real count
+from the response.
 
 ## Per-agent flows
 
@@ -56,6 +63,16 @@ partial evidence. This is the one agent whose control flow the model owns.
 One LLM call ranks the **entire** shortlist. The validator enforces exact
 coverage: a dropped symbol would silently shrink your shortlist, and an invented
 one would render an "Analyze" button for a stock that never scanned.
+
+The universe it ranks is **discovered live**, not hardcoded. A discovery tier
+asks Yahoo's screener for today's movers — `day_gainers` for the US, a
+region-scoped `EquityQuery` for NSE/BSE — dedupes dual listings (preferring
+`.NS` over `.BO`), and feeds those into the existing signal detection. This
+matters because a breakout scanner restricted to a fixed list of large caps
+filters out exactly the mid/small caps that actually move. The old hardcoded
+lists survive only as an offline fallback when the screener is unavailable, and
+the response reports which was used via `universe_source`
+(`discovery` / `fallback` / `explicit`).
 
 ### Portfolio advisor — bounded actions
 
@@ -109,7 +126,7 @@ other path that produces a recommendation.
 
 ![Agent workflow graph](docs/mermaid.png)
 
-Four data-gathering nodes fan out in parallel, then `gate` acts as a fan-in
+Five data-gathering nodes fan out in parallel, then `gate` acts as a fan-in
 barrier and scores how strongly the signals agree:
 
 - **research** — an autonomous ReAct loop; the model picks which tools to call
@@ -117,13 +134,24 @@ barrier and scores how strongly the signals agree:
 - **technical** — deterministic `pandas_ta` indicators, no LLM
 - **fundamental** — computed metrics plus a plain-language read
 - **news** — RSS headlines summarised and scored for sentiment
+- **risk** — single-stock volatility and beta, measured against the ticker's own
+  market index (Nifty 50 for `.NS`/`.BO`, S&P 500 for US), no LLM
 
 `gate` then routes conditionally. If the *independent* signals are unanimous and
 the research agent doesn't dissent, the expensive committee is skipped via
 `quick_decision`. Otherwise the debate runs. The research agent's vote is
 deliberately excluded from the unanimity test — it reads the same underlying
-evidence as the other three nodes, so counting it as a peer would double-count
-that evidence and manufacture agreement.
+evidence as technical/fundamental/news, so counting it as a peer would
+double-count that evidence and manufacture agreement.
+
+Risk deliberately does **not** vote. Volatility isn't directional — a high-beta
+name in a strong uptrend is still a buy — so folding it into a BUY/SELL tally
+would conflate "risky" with "bearish". Instead it can only make the system *less*
+certain: a high-risk ticker caps confidence at `MEDIUM` (never changing the
+BUY/SELL call), recorded as `explanation.risk.confidence_capped`. Portfolio-level
+risk — Sharpe, sector concentration, book beta — stays out of this per-ticker
+graph and is computed in the daily report, where a whole-book view actually
+exists.
 
 ### Committee subgraph
 
@@ -136,6 +164,41 @@ cycle — until the analysts converge (one concedes, or neither has new points) 
 the round cap is hit. `moderate` issues the final verdict, which is validated
 rather than silently falling back, so a real HOLD is distinguishable from a
 parse failure.
+
+## Frontend
+
+Six pages, deliberately consolidated — the expensive analysis pipeline is reachable
+from exactly two places (discovery and direct search) rather than scattered:
+
+| Route | What it's for |
+| --- | --- |
+| `/` | Dashboard — book value, cash, P&L, top holdings, quick actions |
+| `/scanner` | Live movers → signals → LLM triage → pick one for deep analysis |
+| `/market` | Look up any listing, chart it, paper-trade it; watchlist lives here |
+| `/analyze` | Run the full pipeline on any ticker; scheduler jobs + past calls |
+| `/portfolio` | Full book with native *and* base-currency columns; inline trade |
+| `/transactions` | Executed paper trades |
+
+The committee debate is **not** its own page — it's a phase of the analysis
+pipeline, so it renders live inside `/scanner` and `/analyze` wherever a run takes
+the debate path. Watchlist is a panel on `/market` rather than a separate route,
+since starring a ticker and looking one up are the same task.
+
+Notes worth knowing:
+
+- **Streaming.** `/analyze` and `/scanner` consume Server-Sent Events directly
+  (`streamWorkflow` / `streamDebate` in `src/lib/api.ts`), rendering each pipeline
+  node, every debate round, and the final recommendation as they arrive.
+- **Currency is never assumed.** `currency()` requires an explicit code at the
+  call site — a defaulted `"USD"` is what once made ₹ positions render as dollars.
+  INR uses `en-IN` lakh/crore grouping. Positions show their listing currency next
+  to the book's base currency; a position with no FX rate is excluded from the
+  total and named in `unconverted` rather than silently mis-added.
+- **Theme.** Light and dark via `next-themes`, with semantic `--positive` /
+  `--negative` tokens kept separate from the brand accent so "up" is never the
+  same colour as "primary".
+- **Charts** use hardcoded hex palettes rather than the CSS design tokens —
+  lightweight-charts cannot parse `oklch()`/`lab()` and throws if handed one.
 
 ## Regenerating the diagrams
 

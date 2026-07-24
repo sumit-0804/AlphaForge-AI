@@ -22,7 +22,7 @@ graph TB
         A2["Portfolio advisor<br/><i>1 call per book</i>"]
         A3["Reflection<br/><i>on closed trade</i>"]
         A4["Risk + allocation<br/>narration"]
-        WF["LangGraph workflow<br/><i>~15 calls per ticker</i><br/>research · technical · fundamental<br/>news · gate · debate"]
+        WF["LangGraph workflow<br/><i>~15 calls per ticker</i><br/>research · technical · fundamental<br/>news · risk · gate · debate"]
     end
 
     subgraph DET["Deterministic core · no LLM"]
@@ -54,7 +54,7 @@ graph TB
     A3 -->|"distilled lesson"| D2
     WF -->|"recommendation"| D1
     WF -->|"recommendation"| D2
-    D2 -.->|"prior lessons recalled"| WF
+    D2 -.->|"prior + cross-ticker<br/>lessons recalled"| WF
     S3 --> D1
     A4 --> D1
 
