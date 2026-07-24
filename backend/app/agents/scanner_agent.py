@@ -94,7 +94,7 @@ class ScannerAgentService:
                     ],
                     "summary": "Ranked by rule score; the agent's read was unavailable.",
                 },
-                temperature=0.3,
+                temperature=0.1,
                 validate=_make_validator(symbols),
             )
             return {**result["data"], "valid": result["valid"]}

@@ -48,7 +48,7 @@ class PortfolioAgentService:
                     "concentration_risks": [],
                     "notes": [],
                 },
-                temperature=0.3,
+                temperature=0.1,
                 validate=_validate_plan,
             )
             return result["data"]

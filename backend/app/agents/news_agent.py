@@ -96,7 +96,7 @@ class NewsAgentService:
                     "sentiment_score": 0.0,
                     "highlights": [],
                 },
-                temperature=0.3,
+                temperature=0.1,
             )
             return {
                 "symbol": ticker.upper(),

@@ -72,7 +72,7 @@ class FundamentalAgentService:
                     "weaknesses": [],
                     "verdict": "MODERATE",
                 },
-                temperature=0.3,
+                temperature=0.1,
                 validate=_validate,
             )
             return {**result["data"], "valid": result["valid"]}
