@@ -14,10 +14,22 @@ class Settings(BaseSettings):
     mongodb_uri : str = "mongodb://localhost:27017"
     mongodb_db : str = "alphaforge"
     cors_origin : str ="http://localhost:3000"
+
+    # Auth. jwt_secret MUST be overridden in any deployed environment — the default
+    # is a known value, so leaving it means anyone can mint a token for any account.
+    jwt_secret: str = "dev-only-insecure-change-me"
+    jwt_algorithm: str = "HS256"
+    access_token_ttl_minutes: int = 60 * 24 * 7   # a week; this is a paper-trading app
+    # Turn off once your accounts exist, so a public URL can't accrue new users.
+    allow_registration: bool = True
+    # A new book's opening cash, in base_currency.
+    starting_cash: float = 100000.0
     # Gemini powers both the chat agents and the memory embeddings.
     google_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
-    # Changing this invalidates the FAISS index, so delete it and reindex after.
+    # Changing this invalidates every vector already in the FAISS index. Delete the
+    # index directory after; it refills as new memories are written, but entries
+    # saved under the old model stay unsearchable.
     embedding_model: str = "models/gemini-embedding-001"
     faiss_index_path: str = "data/faiss_memory"
     # Per-minute request/token caps. Keep below the real quota to leave headroom.
@@ -41,5 +53,9 @@ class Settings(BaseSettings):
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origin.split(",") if o.strip()]
+
+    @property
+    def jwt_secret_is_default(self) -> bool:
+        return self.jwt_secret == "dev-only-insecure-change-me"
 
 settings = Settings()

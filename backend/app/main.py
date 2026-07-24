@@ -16,8 +16,18 @@ logging.basicConfig(
 )
 
 
+logger = logging.getLogger(__name__)
+
+
 @asynccontextmanager
 async def lifespan(_:FastAPI):
+    if settings.jwt_secret_is_default:
+        # Anyone who has read this repo can forge a token for any account, so make
+        # the warning impossible to miss rather than failing silently in production.
+        logger.warning(
+            "JWT_SECRET is still the built-in default — tokens are forgeable. "
+            "Set JWT_SECRET before exposing this instance."
+        )
     await init_db()
     if settings.scheduler_enabled:
         start_scheduler()
