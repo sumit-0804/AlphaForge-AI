@@ -15,8 +15,10 @@ import {
   BriefcaseIcon,
   ReceiptIcon,
   ListIcon,
+  SignOutIcon,
   type Icon,
 } from "@phosphor-icons/react";
+import { useAuth } from "@/components/auth-provider";
 
 // The six top-level destinations. Analyze absorbed the old Committee page;
 // Watchlist now lives inside Market.
@@ -77,6 +79,31 @@ function NavLinks({ pathname, onNavigate }: { pathname: string; onNavigate?: () 
   );
 }
 
+// Who's signed in, and the way out. Sits at the foot of the sidebar so the
+// disclaimer stays the last thing on the page.
+function AccountFooter() {
+  const { user, signOut } = useAuth();
+  if (!user) return null;
+
+  return (
+    <div className="flex items-center justify-between gap-2 border-t px-3 py-2">
+      {/* The email can be long; truncate rather than widen the sidebar. */}
+      <span className="min-w-0 truncate text-[11px] text-muted-foreground" title={user.email}>
+        {user.email}
+      </span>
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        onClick={signOut}
+        aria-label="Sign out"
+        title="Sign out"
+      >
+        <SignOutIcon size={14} />
+      </Button>
+    </div>
+  );
+}
+
 export function Nav() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
@@ -92,6 +119,7 @@ export function Nav() {
         <div className="flex-1 overflow-y-auto p-3">
           <NavLinks pathname={pathname} />
         </div>
+        <AccountFooter />
         <div className="border-t px-4 py-3 text-[10px] text-muted-foreground">
           Educational analysis — not financial advice.
         </div>
@@ -115,6 +143,7 @@ export function Nav() {
             <div className="p-3">
               <NavLinks pathname={pathname} onNavigate={() => setOpen(false)} />
             </div>
+            <AccountFooter />
           </SheetContent>
         </Sheet>
         <Brand />

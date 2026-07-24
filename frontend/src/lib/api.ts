@@ -1,5 +1,7 @@
 import axios, { AxiosError } from "axios";
 
+import { authHeader, clearToken, getToken } from "@/lib/auth";
+
 // The FastAPI backend. Everything the UI needs comes through here.
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -8,15 +10,33 @@ const client = axios.create({
   headers: { "Content-Type": "application/json" },
 });
 
+// Attach the session token per request rather than once at creation — it changes
+// on login and logout, and a client built at import time would hold a stale one.
+client.interceptors.request.use((config) => {
+  const token = getToken();
+  if (token) config.headers.Authorization = `Bearer ${token}`;
+  return config;
+});
+
 // Surface the backend's error detail as a plain Error message.
 client.interceptors.response.use(
   (res) => res,
   (error: AxiosError<{ detail?: string }>) => {
-    const detail = error.response?.data?.detail;
     const status = error.response?.status;
+    // An expired or revoked token: drop it so the app stops retrying with a
+    // credential the server has already rejected. Clearing notifies AuthProvider,
+    // which sends the user to /login.
+    if (status === 401 && !isAuthPath(error.config?.url)) clearToken();
+    const detail = error.response?.data?.detail;
     throw new Error(detail ?? error.message ?? `Request failed${status ? `: ${status}` : ""}`);
   }
 );
+
+// A 401 from /auth/login is "wrong password", not "session expired" — clearing the
+// token there would log out a user who simply mistyped on the change-password form.
+function isAuthPath(url?: string): boolean {
+  return !!url && (url.startsWith("/auth/login") || url.startsWith("/auth/register"));
+}
 
 async function getJSON<T>(path: string): Promise<T> {
   const res = await client.get<T>(path);
@@ -415,10 +435,17 @@ async function consumeSSE<T>(
   onEvent: (ev: T) => void,
   signal?: AbortSignal
 ): Promise<void> {
+  // Uses fetch rather than EventSource precisely because EventSource cannot send
+  // headers — the bearer token would have to go in the query string, where it
+  // would land in access logs.
   const res = await fetch(`${API_URL}/api${path}`, {
-    headers: { Accept: "text/event-stream" },
+    headers: { Accept: "text/event-stream", ...authHeader() },
     signal,
   });
+  if (res.status === 401) {
+    clearToken();
+    throw new Error("Session expired — please sign in again.");
+  }
   if (!res.ok || !res.body) throw new Error(`Stream failed: ${res.status}`);
 
   const reader = res.body.getReader();
@@ -513,3 +540,29 @@ export function streamWorkflow(
   });
   return consumeSSE<WorkflowEvent>(`/workflow/${ticker.toUpperCase()}/stream?${params}`, onEvent, signal);
 }
+
+/* ---- AUTH ---- */
+
+export type AuthUser = {
+  id: string;
+  email: string;
+};
+
+export type TokenResponse = {
+  access_token: string;
+  token_type: string;
+  expires_in: number;
+  user: AuthUser;
+};
+
+export const login = (email: string, password: string) =>
+  postJSON<TokenResponse>("/auth/login", { email, password });
+
+export const register = (email: string, password: string) =>
+  postJSON<TokenResponse>("/auth/register", { email, password });
+
+/** Validates a stored token on boot; throws (and the interceptor clears it) if stale. */
+export const fetchMe = () => getJSON<AuthUser>("/auth/me");
+
+export const changePassword = (current_password: string, new_password: string) =>
+  postJSON<void>("/auth/change-password", { current_password, new_password });

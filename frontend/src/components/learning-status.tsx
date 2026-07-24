@@ -2,11 +2,11 @@ import { type LearningStatus } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 // Plain-English text for the memory/learning-loop status. Separates "nothing
-// learned yet" (normal) from "the index is broken" (needs a reindex).
+// learned yet" (normal) from "the index is broken".
 const TEXT: Record<LearningStatus, string> = {
   ok: "Learning loop healthy.",
   no_lessons_yet: "No lessons yet — close a paper trade to start teaching it.",
-  index_unavailable: "Lessons exist but the search index is missing — a reindex is needed.",
+  index_unavailable: "Lessons exist but the search index is missing — older ones stay unsearchable.",
   index_degraded: "Some lessons failed to index — the learning loop is degraded.",
   unavailable: "Memory was unavailable for this run.",
   unknown: "Learning status unknown.",

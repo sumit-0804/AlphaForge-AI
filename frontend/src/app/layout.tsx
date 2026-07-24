@@ -3,7 +3,7 @@ import { Geist, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { cn } from "@/lib/utils";
 import { Providers } from "@/components/providers";
-import { Nav } from "@/components/nav";
+import { AppShell } from "@/components/app-shell";
 
 // Monospace is the identity; a clean sans is available for the rare long paragraph.
 const mono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono" });
@@ -26,12 +26,8 @@ export default function RootLayout({
     >
       <body className="min-h-full font-mono">
         <Providers>
-          <div className="flex min-h-screen flex-col md:flex-row">
-            <Nav />
-            <main className="flex-1 overflow-x-hidden p-4 sm:p-6 lg:p-8">
-              <div className="mx-auto w-full max-w-6xl">{children}</div>
-            </main>
-          </div>
+          {/* AppShell owns the nav/main frame because /login renders without it. */}
+          <AppShell>{children}</AppShell>
         </Providers>
       </body>
     </html>
