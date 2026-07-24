@@ -4,6 +4,7 @@ backend/**/__pycache__/
 backend/**/*.pyc
 backend/.env
 backend/data
+backend/.env.docker
 
 # Node
 frontend/node_modules/
@@ -12,7 +13,7 @@ frontend/out/
 frontend/.env.local
 
 AlphaForge_AI_Context_and_Incremental_Plan.txt
-
+atlas-credentials.env
 # OS / IDE
 .DS_Store
 Thumbs.db

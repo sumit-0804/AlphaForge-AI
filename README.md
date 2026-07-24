@@ -1,6 +1,6 @@
 # AlphaForge AI
 
-Local-first autonomous investment research & paper trading platform.
+Autonomous investment research & paper trading platform.
 
 ## Stack
 
