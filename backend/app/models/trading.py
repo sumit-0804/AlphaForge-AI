@@ -15,7 +15,9 @@ class Position(BaseModel):
     cost_basis_base: float | None = None
 
 class Portfolio(Document):
-    user_id:str = "default_user"
+    # No default: every book belongs to a specific account, and a default here is
+    # how unrelated users would silently end up sharing one.
+    user_id:str
     cash_balance:float = 100000.0
     positions: List[Position] =[]
     # Currency of cash_balance and every *_base figure, fixed per portfolio.

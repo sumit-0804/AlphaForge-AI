@@ -70,28 +70,39 @@ async def get_recent_news(ticker: str) -> str:
         return _dump({"error": f"news unavailable for {ticker}: {e}"})
 
 
-@tool
-async def search_memory(query: str, ticker: str | None = None) -> str:
-    """Search AlphaForge's long-term memory for prior lessons distilled from past
-    closed trades and earlier analysis. Call this to avoid repeating past mistakes
-    or to check whether a prior thesis on this name played out. Lessons transfer
-    across stocks — a mistake made on one name is worth knowing about on any name
-    in the same setup — so leave `ticker` unset and describe the SITUATION in the
-    query (sector, trend, momentum, valuation) to find those; set `ticker` only
-    when you specifically want this stock's own history."""
-    try:
-        hits = await MemoryService.search(query, k=3, ticker=ticker)
-        return _dump([h.get("content") for h in hits])
-    except Exception as e:
-        return _dump({"error": f"memory search failed: {e}"})
+def _search_memory_tool(user_id: str):
+    # Built per request rather than at import: which book to search is request
+    # state, and must never be something the model can choose or omit.
+    @tool
+    async def search_memory(query: str, ticker: str | None = None) -> str:
+        """Search AlphaForge's long-term memory for prior lessons distilled from past
+        closed trades and earlier analysis. Call this to avoid repeating past mistakes
+        or to check whether a prior thesis on this name played out. Lessons transfer
+        across stocks — a mistake made on one name is worth knowing about on any name
+        in the same setup — so leave `ticker` unset and describe the SITUATION in the
+        query (sector, trend, momentum, valuation) to find those; set `ticker` only
+        when you specifically want this stock's own history."""
+        try:
+            hits = await MemoryService.search(query, k=3, ticker=ticker, user_id=user_id)
+            return _dump([h.get("content") for h in hits])
+        except Exception as e:
+            return _dump({"error": f"memory search failed: {e}"})
+
+    return search_memory
 
 
-# The toolset an equity-research agent gets. Reusable by any agent that should
-# investigate a ticker autonomously (research, debate, scanner triage, ...).
-RESEARCH_TOOLS = [
-    get_stock_profile,
-    get_technical_indicators,
-    get_fundamentals,
-    get_recent_news,
-    search_memory,
-]
+def research_tools(user_id: str) -> list:
+    """The toolset an equity-research agent gets, scoped to one account. Reusable by
+    any agent that should investigate a ticker autonomously (research, debate,
+    scanner triage, ...).
+
+    A factory rather than a constant because `search_memory` reads that account's
+    memory. The other four tools hit public market data and hold no state, so they
+    are shared."""
+    return [
+        get_stock_profile,
+        get_technical_indicators,
+        get_fundamentals,
+        get_recent_news,
+        _search_memory_tool(user_id),
+    ]

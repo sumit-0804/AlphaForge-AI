@@ -74,7 +74,7 @@ def _make_validator(holdings: dict[str, int]):
 
 class AdvisorAgentService:
     @classmethod
-    async def advise(cls, user_id: str = "default_user") -> dict:
+    async def advise(cls, user_id: str) -> dict:
         try:
             summary = await TradingService.get_portfolio_summary(user_id)
             positions = summary.get("positions") or []
@@ -149,7 +149,7 @@ class AdvisorAgentService:
                     ],
                     "portfolio_summary": "Rule-based read only; the advisor's narrative was unavailable.",
                 },
-                temperature=0.3,
+                temperature=0.1,
                 validate=_make_validator(holdings),
             )
             return {

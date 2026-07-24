@@ -1,5 +1,6 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from app.api.deps import current_user_id
 from app.models.memory import MemoryEntry, MEMORY_TYPES
 from app.services.memory import MemoryService
 
@@ -8,12 +9,17 @@ router = APIRouter(prefix="/memory", tags=["Memory"])
 
 
 @router.get("/recent")
-async def recent_memory(type: str | None = None, ticker: str | None = None, user_id: str = "default_user", limit: int = 20):
-    return await MemoryService.recent(type, ticker, user_id, limit)
+async def recent_memory(
+    type: str | None = None,
+    ticker: str | None = None,
+    limit: int = 20,
+    user_id: str = Depends(current_user_id),
+):
+    return await MemoryService.recent(type, ticker, user_id=user_id, limit=limit)
 
 
 @router.get("/health")
-async def memory_health(user_id: str = "default_user"):
+async def memory_health(user_id: str = Depends(current_user_id)):
     """Report whether the learning loop is working by comparing Mongo counts against the FAISS index."""
     counts = {
         t: await MemoryEntry.find(

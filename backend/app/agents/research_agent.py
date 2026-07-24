@@ -2,7 +2,7 @@ import json
 from fastapi import HTTPException
 
 from app.services.llm_service import LLMService
-from app.agents.tools import RESEARCH_TOOLS
+from app.agents.tools import research_tools
 from app.agents.util import _parse
 
 SYSTEM_PROMPT = (
@@ -30,7 +30,9 @@ class ResearchAgentService:
     # Tool-using agent: it picks which tools to call and loops until it can report.
 
     @classmethod
-    async def research(cls, ticker: str, news: list[dict] | None = None) -> dict:
+    async def research(
+        cls, ticker: str, user_id: str, news: list[dict] | None = None
+    ) -> dict:
         try:
             ticker = ticker.upper()
             task = f"Research {ticker} and return the JSON research object."
@@ -43,7 +45,7 @@ class ResearchAgentService:
                 {"role": "user", "content": task},
             ]
             result = await LLMService.chat_with_tools(
-                messages, RESEARCH_TOOLS, temperature=0.4
+                messages, research_tools(user_id), temperature=0.1
             )
             return {
                 "symbol": ticker,

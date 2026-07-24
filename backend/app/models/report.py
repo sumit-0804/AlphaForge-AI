@@ -6,7 +6,7 @@ from app.models.utc import utc_serializer
 
 
 class DailyReport(Document):
-    user_id: str = "default_user"
+    user_id: str
     date: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     portfolio: dict | None = None
     risk: dict | None = None

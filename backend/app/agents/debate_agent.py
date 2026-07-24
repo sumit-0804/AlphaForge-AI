@@ -222,7 +222,7 @@ class DebateAgentService:
 
     @classmethod
     async def _recall_memory(
-        cls, ticker: str, user_id: str = "default_user", context: dict | None = None
+        cls, ticker: str, user_id: str, context: dict | None = None
     ) -> dict:
         # Pull what we've learned about this stock before arguing the case.
         ticker = ticker.upper()
@@ -258,7 +258,10 @@ class DebateAgentService:
 
         try:
             past = (
-                await Recommendation.find(Recommendation.symbol == ticker)
+                await Recommendation.find(
+                    Recommendation.user_id == user_id,
+                    Recommendation.symbol == ticker,
+                )
                 .sort("-created_at").limit(3).to_list()
             )
             past_recs = [
@@ -294,7 +297,7 @@ class DebateAgentService:
                 ),
             },
         ]
-        result = await LLMService.chat(messages, temperature=0.5)
+        result = await LLMService.chat(messages, temperature=0.1)
         return _parse(
             result["content"],
             {"stance": stance, "arguments": [result["content"].strip()], "key_point": ""},
@@ -322,7 +325,7 @@ class DebateAgentService:
                 ),
             },
         ]
-        result = await LLMService.chat(messages, temperature=0.5)
+        result = await LLMService.chat(messages, temperature=0.1)
         return _parse(
             result["content"],
             {
@@ -338,7 +341,7 @@ class DebateAgentService:
 
     @classmethod
     async def debate(
-        cls, ticker: str, include_news: bool = True, max_rounds: int = 2,
+        cls, ticker: str, user_id: str, include_news: bool = True, max_rounds: int = 2,
         risk: dict | None = None,
     ) -> dict:
         try:
@@ -346,7 +349,7 @@ class DebateAgentService:
             if risk:
                 context["risk"] = risk
             # Recall past lessons and calls so the committee argues with memory, not blind.
-            context["memory"] = await cls._recall_memory(ticker, context=context)
+            context["memory"] = await cls._recall_memory(ticker, user_id, context=context)
 
             # Loop: opening -> rebuttals -> moderate, cycling until they converge or hit max_rounds.
             final = await _debate_graph.ainvoke(
@@ -377,7 +380,7 @@ class DebateAgentService:
 
     @classmethod
     async def debate_stream(
-        cls, ticker: str, include_news: bool = True, max_rounds: int = 2,
+        cls, ticker: str, user_id: str, include_news: bool = True, max_rounds: int = 2,
         risk: dict | None = None,
     ):
         """Same as debate() but yields an event after each phase so the UI can show it live."""
@@ -389,7 +392,7 @@ class DebateAgentService:
             if risk:
                 context["risk"] = risk
 
-            memory = await cls._recall_memory(ticker, context=context)
+            memory = await cls._recall_memory(ticker, user_id, context=context)
             context["memory"] = memory
             yield {"type": "memory", "memory": memory}
 
@@ -514,7 +517,7 @@ async def _moderate_node(state: DebateState) -> dict:
             "key_catalysts": [],
             "key_risks": [],
         },
-        temperature=0.3,
+        temperature=0.1,
         validate=_validate_decision,
     )
     # decision_valid=False means this HOLD is a fallback, not a real verdict.

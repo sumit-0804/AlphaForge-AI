@@ -44,7 +44,7 @@ class ReflectionAgentService:
         quantity: int,
         buy_price: float,
         sell_price: float,
-        user_id: str = "default_user",
+        user_id: str,
     ) -> dict:
         ticker = ticker.upper()
         pnl = round((sell_price - buy_price) * quantity, 2)
@@ -87,7 +87,7 @@ class ReflectionAgentService:
                 "what_went_wrong": [],
                 "lesson": "",
             },
-            temperature=0.3,
+            temperature=0.1,
             validate=_validate_reflection,
         )
         reflection = result["data"]

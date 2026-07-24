@@ -1,7 +1,13 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from app.api.deps import current_user_id
 from app.services.market_data import MarketDataService
 
-router = APIRouter(prefix="/market", tags=["Market Data"])
+# Not user-scoped, but still gated: these hit Yahoo on every call, and an open
+# endpoint is a free way for anyone to get this deployment rate-limited.
+router = APIRouter(
+    prefix="/market", tags=["Market Data"], dependencies=[Depends(current_user_id)]
+)
 
 @router.get("/search")
 async def search_symbols(q: str, limit: int = 10):

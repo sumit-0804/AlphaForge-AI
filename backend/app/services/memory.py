@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import shutil
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -61,7 +60,10 @@ class MemoryService:
         content: str,
         ticker: str | None = None,
         metadata: dict | None = None,
-        user_id: str = "default_user",
+        *,
+        # Keyword-only and required: a memory written to the wrong book leaks one
+        # user's trading history into another's agent prompts.
+        user_id: str,
     ) -> MemoryEntry:
         if type not in MEMORY_TYPES:
             raise HTTPException(400, f"type must be one of {MEMORY_TYPES}")
@@ -99,78 +101,14 @@ class MemoryService:
         return (_INDEX_DIR / "index.faiss").exists()
 
     @classmethod
-    async def reindex_all(cls, batch_size: int = 25) -> dict:
-        """Rebuild the FAISS index from Mongo. Run this after changing the embedding model
-        or when /memory/health reports the index is missing. Rebuilds from scratch to avoid
-        duplicates."""
-        entries = await MemoryEntry.find_all().to_list()
-        if not entries:
-            return {"indexed": 0, "cleared_errors": 0, "index_path": str(_INDEX_DIR)}
-
-        docs = [
-            LCDocument(
-                page_content=e.content,
-                # Keep these keys in sync with _add_to_index, or scoped searches break.
-                metadata={
-                    "id": str(e.id),
-                    "type": e.type,
-                    "ticker": e.ticker,
-                    "user_id": e.user_id,
-                },
-            )
-            for e in entries
-        ]
-
-        # Batch so each embedding call goes through the rate limiter separately.
-        batches = [docs[i : i + batch_size] for i in range(0, len(docs), batch_size)]
-
-        def _first(batch):
-            if _INDEX_DIR.exists():
-                shutil.rmtree(_INDEX_DIR)
-            return FAISS.from_documents(batch, cls._emb())
-
-        def _rest(store, batch):
-            store.add_documents(batch)
-
-        def _persist(store):
-            _INDEX_DIR.mkdir(parents=True, exist_ok=True)
-            store.save_local(str(_INDEX_DIR))
-
-        async with cls._write_lock:
-            store = None
-            for n, batch in enumerate(batches, 1):
-                await _embed_limiter.acquire(
-                    sum(estimate_tokens(d.page_content) for d in batch)
-                )
-                if store is None:
-                    store = await asyncio.to_thread(_first, batch)
-                else:
-                    await asyncio.to_thread(_rest, store, batch)
-                logger.info("Reindex: batch %d/%d (%d docs)", n, len(batches), len(batch))
-            await asyncio.to_thread(_persist, store)
-            cls._store = store
-
-        # These are searchable again now, so clear their stale error flags.
-        cleared = 0
-        for e in entries:
-            if e.metadata.pop("_index_error", None) is not None:
-                await e.save()
-                cleared += 1
-
-        logger.info(
-            "Reindexed %d memory entries into %s (%d stale error flags cleared)",
-            len(docs), _INDEX_DIR, cleared,
-        )
-        return {"indexed": len(docs), "cleared_errors": cleared, "index_path": str(_INDEX_DIR)}
-    
-    @classmethod
     async def search(
         cls,
         query: str,
         k: int = 5,
         type: str | None = None,
         ticker: str | None = None,
-        user_id: str = "default_user",
+        *,
+        user_id: str,
     ) -> list[dict]:
         def _do():
             store = cls._load_store()
@@ -201,7 +139,8 @@ class MemoryService:
         cls,
         type: str | None = None,
         ticker: str | None = None,
-        user_id: str = "default_user",
+        *,
+        user_id: str,
         limit: int = 20,
     ) -> list[MemoryEntry]:
         q = MemoryEntry.find(MemoryEntry.user_id == user_id)

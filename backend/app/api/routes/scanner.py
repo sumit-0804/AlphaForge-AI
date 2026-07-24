@@ -1,9 +1,14 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from app.api.deps import current_user_id
 from app.services.market_scanner import MarketScannerService
 from app.agents.scanner_agent import ScannerAgentService
 
-router = APIRouter(prefix="/scanner", tags=["Scanner"])
+# The scan universe is market-wide, so nothing here is per-user — but triage spends
+# an LLM call per scan, so it needs an account behind it.
+router = APIRouter(
+    prefix="/scanner", tags=["Scanner"], dependencies=[Depends(current_user_id)]
+)
 
 
 @router.get("/")

@@ -50,8 +50,8 @@ class PortfolioService:
     async def allocate(
         cls,
         candidates: list[dict],
+        user_id: str,
         capital: float | None = None,
-        user_id: str = "default_user",
         max_position: float = DEFAULT_MAX_POSITION,
         max_sector: float = DEFAULT_MAX_SECTOR,
         cash_reserve: float = DEFAULT_CASH_RESERVE,

@@ -36,13 +36,13 @@ def _position_currency(pos: Position) -> str:
 
 class TradingService:
     @staticmethod
-    async def get_portfolio(user_id:str ="default_user") -> Portfolio:
+    async def get_portfolio(user_id: str) -> Portfolio:
         portfolio = await Portfolio.find_one(Portfolio.user_id == user_id)
 
         if not portfolio:
             portfolio= Portfolio(
                 user_id=user_id,
-                cash_balance=100000.0,
+                cash_balance=settings.starting_cash,
                 base_currency=settings.base_currency,
             )
             await portfolio.insert()
@@ -55,7 +55,7 @@ class TradingService:
         return portfolio
 
     @staticmethod
-    async def get_portfolio_summary(user_id: str = "default_user") -> dict:
+    async def get_portfolio_summary(user_id: str) -> dict:
         portfolio = await TradingService.get_portfolio(user_id)
         base = portfolio.base_currency or settings.base_currency
 
@@ -254,5 +254,5 @@ class TradingService:
         return transaction
     
     @staticmethod
-    async def get_transaction_history(user_id:str="default_user", limit:int = 50) -> List[Transaction]:
+    async def get_transaction_history(user_id: str, limit:int = 50) -> List[Transaction]:
         return await Transaction.find(Transaction.user_id == user_id).sort("-timestamp").limit(limit).to_list()

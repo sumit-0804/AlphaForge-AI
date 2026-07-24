@@ -1,21 +1,25 @@
 import json
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
 from app.agents.debate_agent import DebateAgentService
+from app.api.deps import current_user_id
 
 router = APIRouter(prefix="/debate", tags=["Debate Agents"])
 
 @router.get("/{ticker}/stream")
-async def debate_stream(ticker: str, news: bool = True, rounds: int = 2):
+async def debate_stream(
+    ticker: str, news: bool = True, rounds: int = 2,
+    user_id: str = Depends(current_user_id),
+):
     # Streams the debate live, one event per phase, for the committee view.
     rounds = max(1, min(rounds, 5))
 
     async def event_source():
         try:
             async for event in DebateAgentService.debate_stream(
-                ticker.upper(), include_news=news, max_rounds=rounds
+                ticker.upper(), user_id, include_news=news, max_rounds=rounds
             ):
                 yield f"data: {json.dumps(event, default=str)}\n\n"
         except Exception as e:  # last-ditch: surface the failure to the client

@@ -6,7 +6,7 @@ from app.models.utc import utc_serializer
 
 
 class Recommendation(Document):
-    user_id: str = "default_user"
+    user_id: str
     symbol: str
     action: str                    # BUY | HOLD | SELL
     confidence: str                # LOW | MEDIUM | HIGH

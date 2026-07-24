@@ -176,7 +176,7 @@ class RiskService:
     @classmethod
     async def analyze(
         cls,
-        user_id: str = "default_user",
+        user_id: str,
         benchmark: str = "^GSPC",
         risk_free: float = 0.04,
         period: str = "1y",

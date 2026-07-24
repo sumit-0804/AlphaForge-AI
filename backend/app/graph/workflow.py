@@ -17,6 +17,9 @@ from app.models.recommendation import Recommendation
 
 class AnalysisState(TypedDict, total=False):
     ticker: str
+    # Whose book this run belongs to. Only the memory-reading nodes use it, but it
+    # rides in state so every node can be scoped without changing the graph shape.
+    user_id: str
     include_news: bool
     research: dict
     technical: dict
@@ -45,7 +48,11 @@ def _risk_caps_confidence(risk: dict | None) -> bool:
 
 async def research_node(state: AnalysisState) -> dict:
     try:
-        return {"research": await ResearchAgentService.research(state["ticker"])}
+        return {
+            "research": await ResearchAgentService.research(
+                state["ticker"], state["user_id"]
+            )
+        }
     except Exception as e:
         return {"errors": [f"research: {e}"]}
 
@@ -95,7 +102,7 @@ async def debate_node(state: AnalysisState) -> dict:
         # News runs in its own node, so skip it here to avoid summarising it twice.
         # Risk is already computed, so hand it over rather than refetching.
         return {"debate": await DebateAgentService.debate(
-            state["ticker"], include_news=False, risk=state.get("risk")
+            state["ticker"], state["user_id"], include_news=False, risk=state.get("risk")
         )}
     except Exception as e:
         return {"errors": [f"debate: {e}"]}
@@ -184,7 +191,9 @@ async def quick_decision_node(state: AnalysisState) -> dict:
     ticker = state["ticker"]
     try:
         # State works as the situation key — _recall_memory reads technical/fundamental from it.
-        memory = await DebateAgentService._recall_memory(ticker, context=state)
+        memory = await DebateAgentService._recall_memory(
+            ticker, state["user_id"], context=state
+        )
     except Exception:
         memory = {
             "prior_lessons": [],
@@ -385,14 +394,15 @@ workflow = build_workflow()
 class WorkflowService:
     # Runs every agent through LangGraph to produce one recommendation.
     @staticmethod
-    async def run(ticker: str, include_news: bool = True) -> dict:
+    async def run(ticker: str, user_id: str, include_news: bool = True) -> dict:
         try:
             final = await workflow.ainvoke(
-                {"ticker": ticker.upper(), "include_news": include_news}
+                {"ticker": ticker.upper(), "user_id": user_id, "include_news": include_news}
             )
             rec = final.get("recommendation") or {}
             if rec:
                 await Recommendation(
+                    user_id=user_id,
                     symbol=ticker.upper(),
                     action=rec.get("action", "HOLD"),
                     confidence=rec.get("confidence", "LOW"),
@@ -405,6 +415,7 @@ class WorkflowService:
                     f"({rec.get('confidence')}) — {rec.get('rationale')}",
                     ticker=ticker,
                     metadata={"action": rec.get("action"), "confidence": rec.get("confidence")},
+                    user_id=user_id,
                 )
             return {
                 "symbol": ticker.upper(),
@@ -423,10 +434,12 @@ class WorkflowService:
             raise HTTPException(502, f"Workflow failed: {e}")
     
     @staticmethod
-    async def run_stream(ticker: str, include_news: bool = True, rounds: int = 2):
+    async def run_stream(ticker: str, user_id: str, include_news: bool = True, rounds: int = 2):
         """Run the same pipeline as run() but stream a progress event at each stage for the UI."""
         ticker = ticker.upper()
-        state: AnalysisState = {"ticker": ticker, "include_news": include_news}
+        state: AnalysisState = {
+            "ticker": ticker, "user_id": user_id, "include_news": include_news
+        }
         try:
             yield {"type": "status", "message": f"Analysing {ticker}…"}
 
@@ -483,7 +496,8 @@ class WorkflowService:
                 converged = False
                 decision_valid = True
                 async for ev in DebateAgentService.debate_stream(
-                    ticker, include_news=False, max_rounds=rounds, risk=state.get("risk")
+                    ticker, user_id, include_news=False, max_rounds=rounds,
+                    risk=state.get("risk"),
                 ):
                     yield {"type": "debate", "event": ev}
                     if ev["type"] == "memory":
@@ -510,6 +524,7 @@ class WorkflowService:
             # Save the recommendation and a memory entry, same as run().
             try:
                 await Recommendation(
+                    user_id=user_id,
                     symbol=ticker,
                     action=rec.get("action", "HOLD"),
                     confidence=rec.get("confidence", "LOW"),
@@ -522,6 +537,7 @@ class WorkflowService:
                     f"({rec.get('confidence')}) — {rec.get('rationale')}",
                     ticker=ticker,
                     metadata={"action": rec.get("action"), "confidence": rec.get("confidence")},
+                    user_id=user_id,
                 )
             except Exception as e:
                 yield {"type": "warn", "message": f"persist failed: {e}"}
@@ -531,8 +547,10 @@ class WorkflowService:
             yield {"type": "error", "message": str(e)}
 
     @staticmethod
-    async def history(ticker: str | None = None, limit: int = 20) -> list[Recommendation]:
-        q = Recommendation.find()
+    async def history(user_id: str, ticker: str | None = None, limit: int = 20) -> list[Recommendation]:
+        # Scoped to the caller: past calls feed the UI's history panel and, via
+        # _recall_memory, future debates — another user's calls belong in neither.
+        q = Recommendation.find(Recommendation.user_id == user_id)
         if ticker:
             q = q.find(Recommendation.symbol == ticker.upper())
         return await q.sort("-created_at").limit(limit).to_list()

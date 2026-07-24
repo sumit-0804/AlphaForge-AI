@@ -7,7 +7,7 @@ from app.models.utc import utc_serializer
 MEMORY_TYPES = ("user_preference", "research_report", "agent_output", "lesson")
 
 class MemoryEntry(Document):
-    user_id : str = "default_user"
+    user_id : str
     type:str
     ticker: str | None = None
     content: str
