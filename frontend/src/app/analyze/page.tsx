@@ -1,17 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  fetchSchedulerJobs,
-  fetchSchedulerStatus,
-  runSchedulerJob,
+  fetchMarketSessions,
   fetchRecommendationHistory,
   fetchMemoryHealth,
 } from "@/lib/api";
-import { dateTime, localTimeZoneLabel } from "@/lib/format";
-import { cn } from "@/lib/utils";
+import { dateTime } from "@/lib/format";
 import { TickerSearch } from "@/components/ticker-search";
 import { WorkflowStreamView, useWorkflowStream } from "@/components/analysis-stream";
 import { MarketSessions } from "@/components/market-sessions";
@@ -41,8 +37,12 @@ export default function AnalyzePage() {
     }
   }, [analysis.recommendation, qc]);
 
-  const jobs = useQuery({ queryKey: ["scheduler-jobs"], queryFn: fetchSchedulerJobs, refetchInterval: 5000 });
-  const status = useQuery({ queryKey: ["scheduler-status"], queryFn: fetchSchedulerStatus, refetchInterval: 5000 });
+  // Cheap, clock-only endpoint; a minute is fine for an open/closed chip.
+  const sessions = useQuery({
+    queryKey: ["market-sessions"],
+    queryFn: fetchMarketSessions,
+    refetchInterval: 60_000,
+  });
   // Only pull a handful up front; "Load more" asks the API for a bigger slice.
   const history = useQuery({
     queryKey: ["recommendation-history", historyLimit],
@@ -55,17 +55,6 @@ export default function AnalyzePage() {
   const canLoadMore = (history.data?.length ?? 0) >= historyLimit;
   const memory = useQuery({ queryKey: ["memory-health"], queryFn: fetchMemoryHealth });
 
-  const runJob = useMutation({
-    mutationFn: (id: string) => runSchedulerJob(id),
-    onSuccess: () => {
-      toast.success("Job triggered");
-      qc.invalidateQueries({ queryKey: ["scheduler-status"] });
-      qc.invalidateQueries({ queryKey: ["scheduler-jobs"] });
-      qc.invalidateQueries({ queryKey: ["recommendation-history"] });
-    },
-    onError: (e) => toast.error((e as Error).message),
-  });
-
   function submit(e: React.FormEvent) {
     e.preventDefault();
     const t = ticker.trim().toUpperCase();
@@ -74,16 +63,10 @@ export default function AnalyzePage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Analyze" subtitle="Run the full agent pipeline on any ticker — research, risk, and a live Bull/Bear committee.">
-        <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-          <span className={cn("inline-block size-1.5 rounded-full", status.data?.running ? "bg-positive" : "bg-muted-foreground")} />
-          Scheduler {status.data?.running ? "live" : "stopped"}
-          {status.data?.timezone ? ` · ${status.data.timezone}` : ""}
-        </span>
-      </PageHeader>
+      <PageHeader title="Analyze" subtitle="Run the full agent pipeline on any ticker — research, risk, and a live Bull/Bear committee." />
 
       <div className="flex flex-wrap items-center gap-2">
-        <MarketSessions sessions={status.data?.sessions} />
+        <MarketSessions sessions={sessions.data} />
         <LearningStatusChip status={memory.data?.status} />
       </div>
 
@@ -131,37 +114,7 @@ export default function AnalyzePage() {
 
       <WorkflowStreamView state={analysis} />
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* Scheduled jobs */}
-        <Card className="p-0">
-          <div className="border-b p-4">
-            <h2 className="text-sm font-medium">Scheduled jobs</h2>
-            <p className="text-[11px] text-muted-foreground">Next-run times in {localTimeZoneLabel()}</p>
-          </div>
-          <div className="divide-y">
-            {(jobs.data ?? []).map((j) => {
-              const last = status.data?.last_runs?.[j.id];
-              return (
-                <div key={j.id} className="flex items-start justify-between gap-3 p-4">
-                  <div className="min-w-0">
-                    <p className="text-xs font-medium">{j.id}</p>
-                    <p className="text-[11px] text-muted-foreground">next: {dateTime(j.next_run)}</p>
-                    {last && (
-                      <p className="mt-1 truncate text-[11px] text-muted-foreground">
-                        last: {Object.entries(last).map(([k, v]) => `${k}=${String(v)}`).join(" · ")}
-                      </p>
-                    )}
-                  </div>
-                  <Button variant="outline" size="sm" onClick={() => runJob.mutate(j.id)} disabled={runJob.isPending}>
-                    Run now
-                  </Button>
-                </div>
-              );
-            })}
-            {jobs.data?.length === 0 && <EmptyState title="No jobs scheduled." />}
-          </div>
-        </Card>
-
+      <div className="grid gap-6">
         {/* Recent recommendations */}
         <Card className="p-0">
           <div className="border-b p-4">

@@ -174,6 +174,10 @@ export type MarketSession = {
   is_open: boolean;
 };
 
+/** Open/closed state per market. The scan response embeds the same shape. */
+export const fetchMarketSessions = () =>
+  getJSON<Record<MarketKey, MarketSession>>("/market/sessions");
+
 /** Universe selector accepted by the scanner. */
 export type UniverseKey = "ALL" | "IN" | "NSE" | "BSE" | "US";
 
@@ -349,22 +353,6 @@ export const fetchRecommendationHistory = (ticker?: string, limit = 20) =>
   getJSON<StoredRecommendation[]>(
     `/workflow/history?limit=${limit}${ticker ? `&ticker=${ticker.toUpperCase()}` : ""}`
   );
-
-/* ---- SCHEDULER ---- */
-
-export type SchedulerJob = { id: string; next_run: string | null };
-
-export type SchedulerStatus = {
-  running: boolean;
-  timezone: string;
-  sessions: Record<MarketKey, MarketSession>;
-  last_runs: Record<string, Record<string, unknown>>;
-};
-
-export const fetchSchedulerJobs = () => getJSON<SchedulerJob[]>("/scheduler/jobs");
-export const fetchSchedulerStatus = () => getJSON<SchedulerStatus>("/scheduler/status");
-export const runSchedulerJob = (jobId: string) =>
-  postJSON<Record<string, unknown>>(`/scheduler/run/${jobId}`, {});
 
 /* ---- MEMORY ---- */
 

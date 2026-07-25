@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from app.api.deps import current_user_id
+from app.core.exchanges import MARKETS, market_status
 from app.services.market_data import MarketDataService
 
 # Not user-scoped, but still gated: these hit Yahoo on every call, and an open
@@ -8,6 +9,11 @@ from app.services.market_data import MarketDataService
 router = APIRouter(
     prefix="/market", tags=["Market Data"], dependencies=[Depends(current_user_id)]
 )
+
+@router.get("/sessions")
+def get_sessions():
+    # Per-market open/closed state. Purely local clock arithmetic, no Yahoo call.
+    return {k: market_status(k) for k in MARKETS}
 
 @router.get("/search")
 async def search_symbols(q: str, limit: int = 10):
