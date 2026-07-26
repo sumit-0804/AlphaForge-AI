@@ -354,6 +354,114 @@ export const fetchRecommendationHistory = (ticker?: string, limit = 20) =>
     `/workflow/history?limit=${limit}${ticker ? `&ticker=${ticker.toUpperCase()}` : ""}`
   );
 
+/* ---- REPORTS ---- */
+
+/** One limiter's budget. `requests`/`tokens` are the last 60s; `requests_today` is the day. */
+export type QuotaSnapshot = {
+  requests: number;
+  rpm: number;
+  tokens: number;
+  tpm: number;
+  requests_today: number;
+  rpd: number | null;
+  day: string | null;
+  /** When the daily budget rolls over (midnight US Pacific), ISO. */
+  resets_at: string | null;
+};
+
+export type QuotaResponse = { chat: QuotaSnapshot; embedding: QuotaSnapshot };
+
+export const fetchQuota = () => getJSON<QuotaResponse>("/reports/quota");
+
+/* Every section is built inside its own try/except, so any one of them can come
+   back as just `{ error }` while the rest succeeded. Hence the optional fields. */
+
+export type RiskNarration = {
+  summary: string;
+  volatility_comment?: string;
+  concentration_risks?: string[];
+  suggestions?: string[];
+  valid?: boolean;
+  error?: string;
+};
+
+export type PortfolioRiskMetrics = {
+  total_equity: number;
+  volatility: number;
+  beta: number | null;
+  sharpe_ratio: number | null;
+  annualized_return: number;
+  risk_level: string;
+};
+
+export type ReportRiskPosition = {
+  ticker: string;
+  sector: string;
+  weight: number;
+  current_value: number;
+  volatility: number;
+  beta: number | null;
+};
+
+export type ReportRisk = {
+  benchmark?: string;
+  portfolio?: PortfolioRiskMetrics | null;
+  positions?: ReportRiskPosition[];
+  sector_exposure?: Record<string, number>;
+  /** Set when the book is empty — there was nothing to analyse. */
+  message?: string;
+  analysis?: RiskNarration;
+  error?: string;
+};
+
+export type AllocationNarration = {
+  summary: string;
+  diversification?: string;
+  concentration_risks?: string[];
+  notes?: string[];
+  error?: string;
+};
+
+export type AllocationItem = {
+  ticker: string;
+  name: string;
+  sector: string;
+  price: number;
+  conviction: number;
+  target_weight: number;
+  shares: number;
+  cost: number;
+  actual_weight: number;
+};
+
+export type ReportAllocation = {
+  capital?: number;
+  invested?: number;
+  cash_remaining?: number;
+  invested_pct?: number;
+  sector_exposure?: Record<string, number>;
+  allocations?: AllocationItem[];
+  analysis?: AllocationNarration;
+  error?: string;
+};
+
+export type DailyReport = {
+  id?: string;
+  date: string;
+  portfolio: (Partial<PortfolioSummary> & { error?: string }) | null;
+  risk: ReportRisk | null;
+  scan: (Partial<ScanResult> & { error?: string }) | null;
+  allocation: ReportAllocation | null;
+};
+
+/** Spends two chat calls. Throws on 409 (already running) and 429 (out of quota). */
+export const generateDailyReport = () => postJSON<DailyReport>("/reports/daily", {});
+
+export const fetchLatestReport = () => getJSON<DailyReport | null>("/reports/latest");
+
+export const fetchRecentReports = (limit = 10) =>
+  getJSON<DailyReport[]>(`/reports/recent?limit=${limit}`);
+
 /* ---- MEMORY ---- */
 
 export type MemoryEntry = {
