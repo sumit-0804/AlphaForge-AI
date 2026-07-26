@@ -8,7 +8,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document as LCDocument
 
 from app.core.config import settings
-from app.core.ratelimit import RateLimiter, estimate_tokens
+from app.core.ratelimit import QuotaExhausted, RateLimiter, estimate_tokens
 from app.models.memory import MemoryEntry, MEMORY_TYPES
 
 logger = logging.getLogger(__name__)
@@ -16,7 +16,13 @@ logger = logging.getLogger(__name__)
 _INDEX_DIR = Path(settings.faiss_index_path)
 
 # Embeddings have their own, tighter quota than chat, and both saves and searches use it.
-_embed_limiter = RateLimiter(settings.embedding_rpm, settings.embedding_tpm, "gemini-embed")
+_embed_limiter = RateLimiter(
+    settings.embedding_rpm,
+    settings.embedding_tpm,
+    "gemini-embed",
+    rpd=settings.embedding_rpd,
+    reset_timezone=settings.quota_reset_timezone,
+)
 
 class MemoryService:
     _store: FAISS | None = None
@@ -96,6 +102,10 @@ class MemoryService:
         return entry
 
     @staticmethod
+    async def quota_snapshot() -> dict:
+        return await _embed_limiter.snapshot()
+
+    @staticmethod
     def index_exists() -> bool:
         # Whether the index file is on disk, using the same check _load_store uses.
         return (_INDEX_DIR / "index.faiss").exists()
@@ -131,6 +141,11 @@ class MemoryService:
             # The query gets embedded too, so it counts against the quota.
             await _embed_limiter.acquire(estimate_tokens(query))
             return await asyncio.to_thread(_do)
+        except QuotaExhausted as e:
+            # Recall degrades rather than erroring: the callers treat an empty list as
+            # "no prior lessons", which is a far better outcome than a failed analysis.
+            logger.warning("Memory search skipped — %s", e)
+            return []
         except Exception as e:
             raise HTTPException(502, f"Memory search failed: {e}")
     

@@ -5,11 +5,17 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import convert_to_messages, HumanMessage, ToolMessage
 
 from app.core.config import settings
-from app.core.ratelimit import RateLimiter, estimate_tokens
+from app.core.ratelimit import QuotaExhausted, RateLimiter, estimate_tokens
 from app.agents.util import parse_json
 
-# One shared limiter so every chat call draws from the same per-minute budget.
-_chat_limiter = RateLimiter(settings.gemini_rpm, settings.gemini_tpm, "gemini-chat")
+# One shared limiter so every chat call draws from the same per-minute and daily budget.
+_chat_limiter = RateLimiter(
+    settings.gemini_rpm,
+    settings.gemini_tpm,
+    "gemini-chat",
+    rpd=settings.gemini_rpd,
+    reset_timezone=settings.quota_reset_timezone,
+)
 
 # Reserve budget for the reply up front since its size isn't known yet; settle() corrects it.
 _RESERVED_OUTPUT_TOKENS = 1200
@@ -41,6 +47,12 @@ def _estimate(messages) -> int:
     return sum(estimate_tokens(_to_text(m.content)) for m in messages) + _RESERVED_OUTPUT_TOKENS
 
 
+def _retry_after_seconds(e: QuotaExhausted) -> int:
+    from datetime import datetime, timezone
+
+    return max(1, int((e.resets_at - datetime.now(timezone.utc)).total_seconds()))
+
+
 class LLMService:
     @staticmethod
     def _client(temperature: float) -> ChatGoogleGenerativeAI:
@@ -48,6 +60,11 @@ class LLMService:
             model=settings.gemini_model,
             google_api_key=settings.google_api_key,
             temperature=temperature,
+            # The SDK defaults to 6 internal retries, and each one is a real request
+            # against RPM/RPD that the limiter above never sees — so a call it counted
+            # as 1 could spend 6. Worse, 429s are what trigger them, so brushing the
+            # quota made it stampede. 1 means "no retries"; 0 means "use the default".
+            max_retries=1,
         )
 
     @staticmethod
@@ -64,12 +81,23 @@ class LLMService:
             client = cls._client(temperature)
             resp = await cls._invoke(client, convert_to_messages(messages))
             return {"model": settings.gemini_model, "content": _to_text(resp.content)}
+        except QuotaExhausted as e:
+            # 429 with a reset time, not a 502 — nothing is broken, the budget is spent.
+            raise HTTPException(
+                429,
+                str(e),
+                headers={"Retry-After": str(_retry_after_seconds(e))},
+            )
         except Exception as e:
             raise HTTPException(502, f"LLM request failed: {e}")
 
     @staticmethod
     def quota() -> dict:
         return _chat_limiter.usage()
+
+    @staticmethod
+    async def quota_snapshot() -> dict:
+        return await _chat_limiter.snapshot()
 
     @classmethod
     async def chat_json(
@@ -166,5 +194,9 @@ class LLMService:
                 "content": _to_text(final.content),
                 "tool_trace": trace,
             }
+        except QuotaExhausted as e:
+            raise HTTPException(
+                429, str(e), headers={"Retry-After": str(_retry_after_seconds(e))}
+            )
         except Exception as e:
             raise HTTPException(502, f"Tool-using LLM request failed: {e}")

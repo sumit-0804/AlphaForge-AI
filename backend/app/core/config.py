@@ -14,40 +14,30 @@ class Settings(BaseSettings):
     mongodb_uri : str = "mongodb://localhost:27017"
     mongodb_db : str = "alphaforge"
     cors_origin : str ="http://localhost:3000"
-
-    # Auth. jwt_secret MUST be overridden in any deployed environment — the default
-    # is a known value, so leaving it means anyone can mint a token for any account.
-    jwt_secret: str = "dev-only-insecure-change-me"
+    jwt_secret: str = "mysecret"
     jwt_algorithm: str = "HS256"
-    access_token_ttl_minutes: int = 60 * 24 * 7   # a week; this is a paper-trading app
-    # Turn off once your accounts exist, so a public URL can't accrue new users.
+    access_token_ttl_minutes: int = 60 * 24 * 7  
     allow_registration: bool = True
-    # A new book's opening cash, in base_currency.
     starting_cash: float = 100000.0
     # Gemini powers both the chat agents and the memory embeddings.
     google_api_key: str = ""
-    gemini_model: str = "gemini-2.5-flash"
-    # Changing this invalidates every vector already in the FAISS index. Delete the
-    # index directory after; it refills as new memories are written, but entries
-    # saved under the old model stay unsearchable.
-    embedding_model: str = "models/gemini-embedding-001"
+    gemini_model: str = "gemini-3.5-flash-lite"
+    embedding_model: str = "models/gemini-embedding-2"
     faiss_index_path: str = "data/faiss_memory"
-    # Per-minute request/token caps. Keep below the real quota to leave headroom.
     gemini_rpm: int = 12
     gemini_tpm: int = 200_000
     embedding_rpm: int = 80
     embedding_tpm: int = 24_000
+    
+    gemini_rpd: int = 400          
+    embedding_rpd: int = 800
+    quota_reset_timezone: str = "America/Los_Angeles"
 
     news_lang: str = "en"
     news_country: str = ""
-    scheduler_enabled: bool = True
-    scheduler_timezone: str = "Asia/Kolkata"   # NSE hours; use e.g. "America/New_York" for US
-
-    # The one currency cash and totals are held in; positions convert into it.
     base_currency: str = "INR"
-    # Frankfurter serves free ECB reference rates.
     forex_api_url: str = "https://api.frankfurter.dev/v1/latest"
-    forex_cache_ttl: int = 3600   # ECB publishes once per working day
+    forex_cache_ttl: int = 3600  
     forex_timeout: float = 10.0
 
     @property
