@@ -9,6 +9,13 @@ import { Nav } from "@/components/nav";
 
 const LOGIN_ROUTE = "/login";
 
+/** `redirect` arrives from the query string, so an absolute URL there would let a
+ *  crafted link bounce a freshly signed-in user off-site. Only same-origin paths. */
+function safeRedirect(value: string | null): string {
+  if (!value || !value.startsWith("/") || value.startsWith("//")) return "/";
+  return value;
+}
+
 /** Decides what a visitor sees: the sign-in screen, a spinner while the stored
  *  token is checked, or the app with its navigation. Everything behind this is a
  *  convenience — the API rejects unauthenticated requests regardless. */
@@ -21,11 +28,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (status === "loading") return;
+    // The query string is read here rather than through useSearchParams: this
+    // component is in the root layout, where that hook opts every page out of
+    // prerendering and fails the build on /_not-found.
+    const search = window.location.search;
     // replace(), not push(): an expired session shouldn't leave a page in history
     // that the back button returns to.
-    if (status === "anonymous" && !onLogin) router.replace(LOGIN_ROUTE);
-    if (status === "authenticated" && onLogin) router.replace("/");
-  }, [status, onLogin, router]);
+    if (status === "anonymous" && !onLogin) {
+      router.replace(`${LOGIN_ROUTE}?redirect=${encodeURIComponent(pathname + search)}`);
+    }
+    if (status === "authenticated" && onLogin) {
+      router.replace(safeRedirect(new URLSearchParams(search).get("redirect")));
+    }
+  }, [status, onLogin, router, pathname]);
 
   if (status === "loading") {
     return (
