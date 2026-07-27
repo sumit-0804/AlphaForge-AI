@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatCard, PageHeader, EmptyState } from "@/components/ui-bits";
 import { TradeDialog } from "@/components/trade-dialog";
+import { DailyReportPanel } from "@/components/daily-report";
 
 export default function PortfolioPage() {
   const { data, isLoading, isError, error } = useQuery({
@@ -121,6 +122,10 @@ export default function PortfolioPage() {
           </Card>
         </>
       )}
+
+      {/* Outside the `data &&` guard on purpose: an empty book still gets a
+          useful report from the scan and allocation halves. */}
+      <DailyReportPanel />
     </div>
   );
 }
