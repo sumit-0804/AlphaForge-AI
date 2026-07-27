@@ -198,8 +198,8 @@ class DebateAgentService:
 
     @staticmethod
     async def _lesson_status(recalled_any: bool, user_id: str) -> str:
-        # Say WHY recall is empty: nothing learned yet, or the index is broken.
-        # Mongo is the source of truth here since it never touches FAISS.
+        # Say WHY recall is empty: nothing learned yet, or the index is broken. The
+        # document count is the source of truth — it holds even if the index does not.
         if recalled_any:
             return "ok"
         try:
@@ -210,13 +210,15 @@ class DebateAgentService:
         if not stored:
             return "no_lessons_yet"
 
-        # Lessons exist in Mongo but weren't found in FAISS — a recorded error tells us why.
-        degraded = any(e.metadata.get("_index_error") for e in stored)
-        status = "index_degraded" if degraded else "index_unavailable"
+        # Lessons are stored but none came back. Either the index isn't answering at
+        # all, or it is and these particular entries never got a vector written.
+        index_ready = await MemoryService.vector_index_ready()
+        status = "index_degraded" if index_ready else "index_unavailable"
         logger.warning(
-            "Learning loop %s: %d stored lesson(s) for %s, none searchable in FAISS "
-            "(index_exists=%s)",
-            status, len(stored), user_id, MemoryService.index_exists(),
+            "Learning loop %s: %d stored lesson(s) for %s, none searchable "
+            "(vector_index_ready=%s, entries_with_embed_error=%d)",
+            status, len(stored), user_id, index_ready,
+            sum(1 for e in stored if e.metadata.get("_index_error")),
         )
         return status
 

@@ -476,7 +476,8 @@ export type MemoryEntry = {
 export const fetchRecentMemory = (type?: string, limit = 20) =>
   getJSON<MemoryEntry[]>(`/memory/recent?limit=${limit}${type ? `&type=${type}` : ""}`);
 
-/** Is the learning loop alive? Compares Mongo counts against the FAISS index. */
+/** Is the learning loop alive? `index_exists` means the Atlas vector index answered;
+ *  `unindexed_entries` counts memories with no vector, invisible to search. */
 export type MemoryHealth = {
   user_id: string;
   status: LearningStatus;

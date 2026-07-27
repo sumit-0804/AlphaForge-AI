@@ -20,21 +20,20 @@ async def recent_memory(
 
 @router.get("/health")
 async def memory_health(user_id: str = Depends(current_user_id)):
-    """Report whether the learning loop is working by comparing Mongo counts against the FAISS index."""
+    """Report whether the learning loop is working: whether the Atlas vector index
+    answers, and whether any entry is missing its embedding.
+    """
     counts = {
         t: await MemoryEntry.find(
             MemoryEntry.user_id == user_id, MemoryEntry.type == t
         ).count()
         for t in MEMORY_TYPES
     }
-    # Entries in Mongo that never made it into the index.
-    failed = await MemoryEntry.find(
-        MemoryEntry.user_id == user_id,
-        {"metadata._index_error": {"$exists": True}},
-    ).count()
+    # Stored, but with no vector — so invisible to search until the backfill runs.
+    failed = await MemoryService.unembedded_count(user_id)
 
     lessons = counts.get("lesson", 0)
-    index_exists = MemoryService.index_exists()
+    index_exists = await MemoryService.vector_index_ready()
     if failed:
         status = "index_degraded"
     elif lessons and not index_exists:

@@ -23,7 +23,12 @@ class Settings(BaseSettings):
     google_api_key: str = ""
     gemini_model: str = "gemini-3.5-flash-lite"
     embedding_model: str = "models/gemini-embedding-2"
-    faiss_index_path: str = "data/faiss_memory"
+    # Created by hand in the Atlas UI, not by this app — Mongo builds search indexes
+    # asynchronously, so there is nothing useful to await on startup.
+    vector_index_name: str = "memory_vector_index"
+    # Must equal numDimensions in the Atlas index; also passed as the model's
+    # output_dimensionality so stored vectors and the index cannot drift apart.
+    embedding_dimensions: int = 1536
     gemini_rpm: int = 12
     gemini_tpm: int = 200_000
     embedding_rpm: int = 80
