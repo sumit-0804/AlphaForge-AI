@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run lint
+
+      - run: npm run build
+        env:
+          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL || 'http://localhost:8000' }}
+
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - run: uv sync --frozen
+
+      - name: OpenAPI schema smoke test
+        run: |
+          uv run python - <<'PY'
+          from app.main import app
+          n = len(app.openapi()["paths"])
+          assert n >= 25, f"only {n} paths resolved"
+          print(f"ok: {n} paths")
+          PY
+  images: 
+        needs: [frontend, backend]
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: docker/setup-buildx-action@v3
+            - uses: docker/build-push-action@v6
+              with:
+                context: ./backend
+                push: false
+                tags: alphaforge-backend:${{ github.sha }}
+                cache-from: type=gha
+                cache-to: type=gha,mode=max
+            - uses: docker/build-push-action@v6
+              with:
+                context: ./frontend
+                push: false
+                tags: alphaforge-frontend:${{ github.sha }}
+                build-args: |
+                  NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL || 'http://localhost:8000' }}
+                cache-from: type=gha
+                cache-to: type=gha,mode=max
