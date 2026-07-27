@@ -13,7 +13,7 @@ graph TB
         T1["User · Scanner page"]
         T2["User · Deep analysis"]
         T3["User · Buy / Sell"]
-        T4["Scheduler<br/>IN 09:20/12:00/15:20 IST<br/>US 09:35/15:30 ET<br/>report 16:00 IST"]
+        T4["User · Daily report<br/><i>on demand</i>"]
     end
 
     subgraph LLM["LLM agents"]
@@ -21,7 +21,7 @@ graph TB
         A1["Scanner triage<br/><i>1 call per scan</i>"]
         A2["Portfolio advisor<br/><i>1 call per book</i>"]
         A3["Reflection<br/><i>on closed trade</i>"]
-        A4["Risk + allocation<br/>narration"]
+        A4["Risk + allocation<br/>narration<br/><i>2 calls per report</i>"]
         WF["LangGraph workflow<br/><i>~15 calls per ticker</i><br/>research · technical · fundamental<br/>news · risk · gate · debate"]
     end
 
