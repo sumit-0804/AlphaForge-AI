@@ -1,0 +1,128 @@
+# Builds and deploys both services to Cloud Run. Step order resolves a circle: the
+# frontend needs the backend URL baked in at build time, the backend needs the
+# frontend URL for CORS.
+
+substitutions:
+  _REGION: asia-south1
+  _REPO: alphaforge
+  _BACKEND_SERVICE: alphaforge-backend
+  _FRONTEND_SERVICE: alphaforge-frontend
+
+options:
+  machineType: E2_HIGHCPU_8
+  # Required for user-managed service accounts, or the build fails at step zero
+  # complaining about a missing logs bucket.
+  logging: CLOUD_LOGGING_ONLY
+
+images:
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/backend:${SHORT_SHA}
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/frontend:${SHORT_SHA}
+
+steps:
+  # ---- backend ----------------------------------------------------------------
+  - id: build-backend
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/backend:${SHORT_SHA}
+      - --tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/backend:latest
+      # Warms the uv layer from the previous build; harmless on the first run.
+      - --cache-from=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/backend:latest
+      - ./backend
+
+  - id: push-backend
+    name: gcr.io/cloud-builders/docker
+    args: [push, --all-tags, "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/backend"]
+    waitFor: [build-backend]
+
+  - id: deploy-backend
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_BACKEND_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/backend:${SHORT_SHA}
+      - --region=${_REGION}
+      - --platform=managed
+      # The browser calls this directly, so it has to be reachable without a
+      # Google identity. Authorisation is the app's own JWT.
+      - --allow-unauthenticated
+      - --memory=1Gi
+      - --cpu=1
+      # Agent runs chain several LLM calls and stream over SSE; the 300s default
+      # cuts long debates off mid-response.
+      - --timeout=900
+      - --min-instances=0
+      - --set-env-vars=APP_ENV=production,API_PREFIX=/api,MONGODB_DB=alphaforge,GEMINI_MODEL=gemini-3.5-flash-lite,EMBEDDING_MODEL=models/gemini-embedding-2,EMBEDDING_DIMENSIONS=1536,VECTOR_INDEX_NAME=memory_vector_index,GEMINI_RPM=12,GEMINI_RPD=400,EMBEDDING_RPM=80,EMBEDDING_RPD=800,QUOTA_RESET_TIMEZONE=Asia/Kolkata,NEWS_LANG=en,NEWS_COUNTRY=IN,ALLOW_REGISTRATION=false
+      - --set-secrets=MONGODB_URI=alphaforge-mongodb-uri:latest,GOOGLE_API_KEY=alphaforge-google-api-key:latest,JWT_SECRET=alphaforge-jwt-secret:latest
+    waitFor: [push-backend]
+
+  # ---- frontend ---------------------------------------------------------------
+  - id: read-backend-url
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -e
+        gcloud run services describe ${_BACKEND_SERVICE} \
+          --region=${_REGION} --format='value(status.url)' > /workspace/backend_url.txt
+        echo "backend: $$(cat /workspace/backend_url.txt)"
+    waitFor: [deploy-backend]
+
+  - id: build-frontend
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -e
+        docker build \
+          --build-arg NEXT_PUBLIC_API_URL="$$(cat /workspace/backend_url.txt)" \
+          --tag ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/frontend:${SHORT_SHA} \
+          --tag ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/frontend:latest \
+          --cache-from ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/frontend:latest \
+          ./frontend
+    waitFor: [read-backend-url]
+
+  - id: push-frontend
+    name: gcr.io/cloud-builders/docker
+    args: [push, --all-tags, "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/frontend"]
+    waitFor: [build-frontend]
+
+  - id: deploy-frontend
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_FRONTEND_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/frontend:${SHORT_SHA}
+      - --region=${_REGION}
+      - --platform=managed
+      - --allow-unauthenticated
+      - --memory=512Mi
+      - --cpu=1
+      - --min-instances=0
+    waitFor: [push-frontend]
+
+  # ---- close the CORS loop ----------------------------------------------------
+  - id: point-backend-cors-at-frontend
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -e
+        FRONTEND_URL=$$(gcloud run services describe ${_FRONTEND_SERVICE} \
+          --region=${_REGION} --format='value(status.url)')
+        # --update-env-vars, not --set-env-vars: the latter would drop every other
+        # variable set during deploy-backend above.
+        gcloud run services update ${_BACKEND_SERVICE} \
+          --region=${_REGION} \
+          --update-env-vars="CORS_ORIGIN=$${FRONTEND_URL}"
+        echo "backend now trusts origin: $${FRONTEND_URL}"
+    waitFor: [deploy-frontend]
+
+timeout: 1800s

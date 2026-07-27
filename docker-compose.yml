@@ -7,8 +7,6 @@ services:
       - .env
     ports:
       - "8000:8000"
-    volumes:
-      - faiss-memory: /app/data
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=4)"]
       interval: 30s
@@ -19,9 +17,11 @@ services:
 
   frontend:
     build:
-    context: ./frontend
-    args:
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?set NEXT_PUBLIC_API_URL in .env}
+      context: ./frontend
+      # Build-time only: NEXT_PUBLIC_* is baked into the client bundle by
+      # `next build`, so setting it on the container at runtime does nothing.
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?set NEXT_PUBLIC_API_URL in .env}
     image: alphaforge-frontend:local
     ports:
       - "3000:3000"
@@ -29,6 +29,3 @@ services:
       backend:
         condition: service_healthy
     restart: unless-stopped
-
-volumes:
-  faiss-memory:

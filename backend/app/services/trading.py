@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from fastapi import HTTPException
 from typing import List
@@ -11,7 +10,6 @@ from app.agents.reflection_agent import ReflectionAgentService
 
 logger = logging.getLogger(__name__)
 
-_bg_tasks: set = set()
 async def _safe_reflect(user_id: str, ticker: str, quantity: int, buy_price: float, sell_price: float) -> None:
     # Runs after the trade is saved, so never raise — but log loudly, since this is
     # the only thing that writes lessons.
@@ -246,11 +244,9 @@ class TradingService:
         )
         await transaction.insert()
         if action == "sell":
-            task = asyncio.create_task(
-                _safe_reflect(user_id, ticker, quantity, avg_buy_price, current_price)
-            )
-            _bg_tasks.add(task)
-            task.add_done_callback(_bg_tasks.discard)
+            # Awaited, not detached: Cloud Run throttles CPU once the response is
+            # sent, so a background task might never run — and this writes the lessons.
+            await _safe_reflect(user_id, ticker, quantity, avg_buy_price, current_price)
         return transaction
     
     @staticmethod
