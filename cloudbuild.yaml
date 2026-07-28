@@ -60,7 +60,7 @@ steps:
       # Named explicitly: Cloud Run otherwise falls back to the Compute Engine
       # default account, which modern projects do not create.
       - --service-account=${_RUN_SA}@${PROJECT_ID}.iam.gserviceaccount.com
-      - --set-env-vars=APP_ENV=production,API_PREFIX=/api,MONGODB_DB=alphaforge,GEMINI_MODEL=gemini-3.5-flash-lite,EMBEDDING_MODEL=models/gemini-embedding-2,EMBEDDING_DIMENSIONS=1536,VECTOR_INDEX_NAME=memory_vector_index,GEMINI_RPM=12,GEMINI_RPD=400,EMBEDDING_RPM=80,EMBEDDING_RPD=800,QUOTA_RESET_TIMEZONE=Asia/Kolkata,NEWS_LANG=en,NEWS_COUNTRY=IN,ALLOW_REGISTRATION=false
+      - --set-env-vars=APP_ENV=production,API_PREFIX=/api,MONGODB_DB=alphaforge,GEMINI_MODEL=gemini-3.5-flash-lite,EMBEDDING_MODEL=models/gemini-embedding-2,EMBEDDING_DIMENSIONS=1536,VECTOR_INDEX_NAME=memory_vector_index,GEMINI_RPM=12,GEMINI_RPD=400,EMBEDDING_RPM=80,EMBEDDING_RPD=800,QUOTA_RESET_TIMEZONE=Asia/Kolkata,NEWS_LANG=en,NEWS_COUNTRY=IN,ALLOW_REGISTRATION=true
       - --set-secrets=MONGODB_URI=alphaforge-mongodb-uri:latest,GOOGLE_API_KEY=alphaforge-google-api-key:latest,JWT_SECRET=alphaforge-jwt-secret:latest
     waitFor: [push-backend]
 
