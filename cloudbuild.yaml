@@ -114,7 +114,7 @@ steps:
       - --service-account=${_RUN_SA}@${PROJECT_ID}.iam.gserviceaccount.com
     waitFor: [push-frontend]
 
-  # ---- close the CORS loop ----------------------------------------------------
+  # ---- close the CORS loop -------------------------------------------------
   - id: point-backend-cors-at-frontend
     name: gcr.io/google.com/cloudsdktool/cloud-sdk
     entrypoint: bash
