@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     # Must equal numDimensions in the Atlas index; also passed as the model's
     # output_dimensionality so stored vectors and the index cannot drift apart.
     embedding_dimensions: int = 1536
+    # Graph checkpoints: debate transcripts are large and the Atlas free tier is 512MB,
+    # so resumable state expires rather than accumulating.
+    checkpoint_collection: str = "checkpoints"
+    checkpoint_writes_collection: str = "checkpoint_writes"
+    checkpoint_ttl_seconds: int = 60 * 60 * 24 * 3
     gemini_rpm: int = 12
     gemini_tpm: int = 200_000
     embedding_rpm: int = 80
