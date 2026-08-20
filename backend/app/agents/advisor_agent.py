@@ -4,11 +4,10 @@ import json
 
 from fastapi import HTTPException
 
+from app.agents.schemas import AdvisorSuggestion, AdvisorSuggestions
 from app.services.llm_service import LLMService
 from app.services.trading import TradingService
 from app.services.market_scanner import MarketScannerService
-
-_ACTIONS = ("HOLD", "SELL", "TRIM", "ADD")
 
 SYSTEM_PROMPT = (
     "You are AlphaForge Portfolio Advisor. You are given the user's current "
@@ -23,19 +22,6 @@ SYSTEM_PROMPT = (
     "plainly rather than inventing activity.\n"
     "- A large loss is not by itself a reason to sell, and a large gain is not by "
     "itself a reason to hold. Reason from the signals, not the P&L alone.\n"
-    "Respond ONLY with a valid JSON object — no markdown:\n"
-    "{\n"
-    '  "suggestions": [\n'
-    "    {\n"
-    '      "ticker": "TICKER",\n'
-    '      "action": "HOLD | SELL | TRIM | ADD",\n'
-    '      "urgency": "HIGH | MEDIUM | LOW",\n'
-    '      "rationale": "1-2 sentences citing the specific signals or numbers",\n'
-    '      "suggested_quantity": 0\n'
-    "    }\n"
-    "  ],\n"
-    '  "portfolio_summary": "2-3 sentences on the book\'s overall posture"\n'
-    "}\n"
     "`suggested_quantity` is how many shares to act on (0 for HOLD); never exceed "
     "the quantity held. Cover EVERY ticker you are given, exactly once. "
     "This is educational analysis, not financial advice."
@@ -43,29 +29,22 @@ SYSTEM_PROMPT = (
 
 
 def _make_validator(holdings: dict[str, int]):
+    # Cross-field rules the schema cannot carry: they depend on this request's holdings.
     tickers = set(holdings)
 
-    def _validate(obj: dict) -> str | None:
-        s = obj.get("suggestions")
-        if not isinstance(s, list) or not s:
-            return "The 'suggestions' field must be a non-empty array."
-        got = [r.get("ticker") for r in s if isinstance(r, dict)]
+    def _validate(obj: AdvisorSuggestions) -> str | None:
+        got = [r.ticker for r in obj.suggestions]
         missing, unknown = tickers - set(got), set(got) - tickers
         if missing:
             return f"These positions are missing from 'suggestions': {sorted(missing)}."
         if unknown:
             return f"These tickers are not held: {sorted(unknown)}."
-        for r in s:
-            if r.get("action") not in _ACTIONS:
-                return f"'action' for {r.get('ticker')} must be one of {', '.join(_ACTIONS)}."
+        for r in obj.suggestions:
             # Don't suggest selling more shares than are held.
-            q = r.get("suggested_quantity", 0)
-            if not isinstance(q, int) or q < 0:
-                return f"'suggested_quantity' for {r.get('ticker')} must be a non-negative integer."
-            if q > holdings.get(r["ticker"], 0):
+            if r.suggested_quantity > holdings.get(r.ticker, 0):
                 return (
-                    f"'suggested_quantity' for {r['ticker']} is {q} but only "
-                    f"{holdings.get(r['ticker'], 0)} shares are held."
+                    f"'suggested_quantity' for {r.ticker} is {r.suggested_quantity} but "
+                    f"only {holdings.get(r.ticker, 0)} shares are held."
                 )
         return None
 
@@ -131,30 +110,31 @@ class AdvisorAgentService:
             ]
             result = await LLMService.chat_json(
                 messages,
-                fallback={
-                    # If the LLM fails, fall back to the rule-based signals; never invent a SELL.
-                    "suggestions": [
-                        {
-                            "ticker": e["ticker"],
-                            "action": "SELL" if e["bearish_score"] >= 5 else "HOLD",
-                            "urgency": "HIGH" if e["bearish_score"] >= 5 else "LOW",
-                            "rationale": (
+                AdvisorSuggestions,
+                # If the LLM fails, fall back to the rule-based signals; never invent a SELL.
+                fallback=AdvisorSuggestions(
+                    suggestions=[
+                        AdvisorSuggestion(
+                            ticker=e["ticker"],
+                            action="SELL" if e["bearish_score"] >= 5 else "HOLD",
+                            urgency="HIGH" if e["bearish_score"] >= 5 else "LOW",
+                            rationale=(
                                 f"Rule-based signals: {', '.join(e['bearish_signals'])}."
                                 if e["bearish_signals"]
                                 else "No bearish signals firing."
                             ),
-                            "suggested_quantity": e["quantity"] if e["bearish_score"] >= 5 else 0,
-                        }
+                            suggested_quantity=e["quantity"] if e["bearish_score"] >= 5 else 0,
+                        )
                         for e in enriched
                     ],
-                    "portfolio_summary": "Rule-based read only; the advisor's narrative was unavailable.",
-                },
+                    portfolio_summary="Rule-based read only; the advisor's narrative was unavailable.",
+                ),
                 temperature=0.1,
                 validate=_make_validator(holdings),
             )
             return {
                 "positions": enriched,
-                **result["data"],
+                **result["data"].model_dump(),
                 "valid": result["valid"],
             }
         except HTTPException:

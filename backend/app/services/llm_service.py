@@ -1,12 +1,16 @@
-import json
+from collections.abc import Callable
+from typing import TypeVar
+
 from fastapi import HTTPException
+from pydantic import BaseModel, ValidationError
 
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.messages import convert_to_messages, HumanMessage, ToolMessage
+from langchain_core.messages import convert_to_messages
 
 from app.core.config import settings
 from app.core.ratelimit import QuotaExhausted, RateLimiter, estimate_tokens
-from app.agents.util import parse_json
+
+M = TypeVar("M", bound=BaseModel)
 
 # One shared limiter so every chat call draws from the same per-minute and daily budget.
 _chat_limiter = RateLimiter(
@@ -53,6 +57,21 @@ def _retry_after_seconds(e: QuotaExhausted) -> int:
     return max(1, int((e.resets_at - datetime.now(timezone.utc)).total_seconds()))
 
 
+def _as_http(e: Exception) -> HTTPException:
+    # A spent budget is a 429 with a reset time, not a 502 — nothing is broken.
+    if isinstance(e, QuotaExhausted):
+        return HTTPException(429, str(e), headers={"Retry-After": str(_retry_after_seconds(e))})
+    return HTTPException(502, f"LLM request failed: {e}")
+
+
+def _repair_hint(exc: ValidationError) -> str:
+    # Pydantic names the exact field and reason, which beats a hand-written message.
+    return "; ".join(
+        f"{'.'.join(str(p) for p in e['loc']) or 'root'}: {e['msg']}"
+        for e in exc.errors()[:5]
+    )
+
+
 class LLMService:
     @staticmethod
     def _client(temperature: float) -> ChatGoogleGenerativeAI:
@@ -72,7 +91,10 @@ class LLMService:
         # Every outbound call goes through here so nothing skips the rate limiter.
         handle = await _chat_limiter.acquire(_estimate(msgs))
         resp = await client.ainvoke(msgs)
-        _chat_limiter.settle(handle, _usage_total(resp))
+        # with_structured_output(include_raw=True) hands back a dict; the AIMessage
+        # carrying usage_metadata is under "raw", and settle() needs the real count.
+        usage = resp["raw"] if isinstance(resp, dict) and "raw" in resp else resp
+        _chat_limiter.settle(handle, _usage_total(usage))
         return resp
 
     @classmethod
@@ -81,15 +103,8 @@ class LLMService:
             client = cls._client(temperature)
             resp = await cls._invoke(client, convert_to_messages(messages))
             return {"model": settings.gemini_model, "content": _to_text(resp.content)}
-        except QuotaExhausted as e:
-            # 429 with a reset time, not a 502 — nothing is broken, the budget is spent.
-            raise HTTPException(
-                429,
-                str(e),
-                headers={"Retry-After": str(_retry_after_seconds(e))},
-            )
         except Exception as e:
-            raise HTTPException(502, f"LLM request failed: {e}")
+            raise _as_http(e)
 
     @staticmethod
     def quota() -> dict:
@@ -103,100 +118,43 @@ class LLMService:
     async def chat_json(
         cls,
         messages: list[dict],
-        fallback: dict,
+        schema: type[M],
+        fallback: M,
         temperature: float = 0.3,
         max_retries: int = 2,
-        validate=None,
+        validate: Callable[[M], str | None] | None = None,
     ) -> dict:
-        """Chat but retry on bad JSON: show the model its error and ask for a fix, then
-        fall back if it still fails. `validate` returns an error string or None."""
+        """Chat constrained to `schema` at decode time, so a retry only fires for rules a
+        schema cannot express — `validate` returns an error string or None."""
+        client = cls._client(temperature).with_structured_output(
+            schema, method="json_schema", include_raw=True
+        )
         convo = list(messages)
-        model = settings.gemini_model
+
         for attempt in range(max_retries + 1):
-            result = await cls.chat(convo, temperature=temperature)
-            model = result["model"]
-            raw = result["content"]
-            obj, ok = parse_json(raw)
+            try:
+                result = await cls._invoke(client, convert_to_messages(convo))
+            except Exception as e:
+                raise _as_http(e)
 
-            problem = None
-            if not ok:
-                problem = "Your last response was not a valid JSON object."
-            elif validate is not None:
-                problem = validate(obj)
+            parsed, err = result.get("parsed"), result.get("parsing_error")
+            if err is not None:
+                problem = _repair_hint(err) if isinstance(err, ValidationError) else str(err)
+            elif parsed is None:
+                problem = "the response was empty"
+            else:
+                problem = validate(parsed) if validate else None
 
-            if problem is None and ok:
-                return {"model": model, "data": obj, "attempts": attempt + 1, "valid": True}
+            if problem is None:
+                return {"model": settings.gemini_model, "data": parsed,
+                        "attempts": attempt + 1, "valid": True}
 
-            # Show the model its bad output and ask for a corrected one.
+            # Show the model its rejected output and what was wrong with it.
             convo = messages + [
-                {"role": "assistant", "content": raw},
-                {
-                    "role": "user",
-                    "content": (
-                        f"{problem} Return ONLY a single corrected JSON object — no "
-                        "markdown fences, no commentary before or after."
-                    ),
-                },
+                {"role": "assistant", "content": _to_text(result["raw"].content)},
+                {"role": "user", "content":
+                 f"That response was rejected — {problem}. Return a corrected object."},
             ]
 
-        return {"model": model, "data": fallback, "attempts": max_retries + 1, "valid": False}
-
-    @classmethod
-    async def chat_with_tools(
-        cls,
-        messages: list[dict],
-        tools: list,
-        temperature: float = 0.3,
-        max_iterations: int = 6,
-    ) -> dict:
-        """Let the model call tools in a loop until it answers or hits max_iterations,
-        then force a final tool-free answer. Returns the text plus a trace of tool calls."""
-        client = cls._client(temperature).bind_tools(tools)
-        tool_map = {t.name: t for t in tools}
-        convo = convert_to_messages(messages)
-        trace: list[dict] = []
-
-        try:
-            for _ in range(max_iterations):
-                ai = await cls._invoke(client, convo)
-                convo.append(ai)
-
-                calls = getattr(ai, "tool_calls", None) or []
-                if not calls:
-                    # No tool requested, so the model is done.
-                    return {
-                        "model": settings.gemini_model,
-                        "content": _to_text(ai.content),
-                        "tool_trace": trace,
-                    }
-
-                for tc in calls:
-                    name, args = tc["name"], tc.get("args", {})
-                    tool = tool_map.get(name)
-                    if tool is None:
-                        output = json.dumps({"error": f"unknown tool: {name}"})
-                    else:
-                        try:
-                            output = await tool.ainvoke(args)
-                        except Exception as e:
-                            output = json.dumps({"error": str(e)})
-                    output = output if isinstance(output, str) else str(output)
-                    trace.append({"tool": name, "args": args, "result_preview": output[:240]})
-                    convo.append(ToolMessage(content=output, tool_call_id=tc["id"]))
-
-            # Hit the cap, so force a final answer with no more tool calls.
-            final = await cls._invoke(
-                cls._client(temperature),
-                convo + [HumanMessage("Stop calling tools and return your final answer now.")],
-            )
-            return {
-                "model": settings.gemini_model,
-                "content": _to_text(final.content),
-                "tool_trace": trace,
-            }
-        except QuotaExhausted as e:
-            raise HTTPException(
-                429, str(e), headers={"Retry-After": str(_retry_after_seconds(e))}
-            )
-        except Exception as e:
-            raise HTTPException(502, f"Tool-using LLM request failed: {e}")
+        return {"model": settings.gemini_model, "data": fallback,
+                "attempts": max_retries + 1, "valid": False}

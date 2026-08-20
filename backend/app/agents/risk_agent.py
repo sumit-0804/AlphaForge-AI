@@ -2,24 +2,13 @@ import json
 
 from fastapi import HTTPException
 
+from app.agents.schemas import RiskRead
 from app.services.llm_service import LLMService
-
-
-def _validate(obj: dict) -> str | None:
-    if not isinstance(obj.get("summary"), str) or not obj["summary"].strip():
-        return "The JSON is missing a non-empty 'summary' string."
-    return None
 
 SYSTEM_PROMPT=(
     "You are AlphaForge Risk Agent. You are given computed portfolio risk metrics "
     "— volatility, beta, Sharpe ratio and sector exposure. Interpret the risk "
-    "posture in plain language. Respond ONLY with a valid JSON object — no markdown:\n"
-    "{\n"
-    '  "summary": "2-3 sentences on the portfolio\'s overall risk profile",\n'
-    '  "volatility_comment": "1 sentence on how volatile / market-sensitive it is",\n'
-    '  "concentration_risks": ["short bullet on any name or sector overweight"],\n'
-    '  "suggestions": ["short, practical risk-reduction idea"]\n'
-    "}\n"
+    "posture in plain language. "
     "This is educational analysis, not financial advice."
 )
 
@@ -40,16 +29,14 @@ class RiskAgentService:
             # Self-correcting since this runs unattended in the daily report.
             result = await LLMService.chat_json(
                 messages,
-                fallback={
-                    "summary": "Could not produce a structured risk read.",
-                    "volatility_comment": "",
-                    "concentration_risks": [],
-                    "suggestions": [],
-                },
+                RiskRead,
+                fallback=RiskRead(
+                    summary="Could not produce a structured risk read.",
+                    volatility_comment="", concentration_risks=[], suggestions=[],
+                ),
                 temperature=0.1,
-                validate=_validate,
             )
-            return {**result["data"], "valid": result["valid"]}
+            return {**result["data"].model_dump(), "valid": result["valid"]}
         except HTTPException:
             raise
         except Exception as e:

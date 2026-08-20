@@ -1,39 +1,18 @@
 import json
 import logging
 
+from app.agents.schemas import Reflection
 from app.services.llm_service import LLMService
 from app.services.memory import MemoryService
 
 logger = logging.getLogger(__name__)
 
-_OUTCOMES = ("WIN", "LOSS", "BREAKEVEN")
-
 SYSTEM_PROMPT = (
     "You are AlphaForge Reflection Agent. A paper trade has just been closed. "
     "Given the trade result (and any prior lessons for this stock), explain why "
-    "it succeeded or failed and distill ONE concrete, reusable lesson. Respond "
-    "ONLY with a valid JSON object — no markdown:\n"
-    "{\n"
-    '  "outcome": "WIN | LOSS | BREAKEVEN",\n'
-    '  "summary": "2-3 sentence review of how the trade played out",\n'
-    '  "what_went_right": ["short bullet"],\n'
-    '  "what_went_wrong": ["short bullet"],\n'
-    '  "lesson": "one concrete, reusable takeaway for future trades"\n'
-    "}\n"
+    "it succeeded or failed and distill ONE concrete, reusable lesson. "
     "This is educational analysis, not financial advice."
 )
-
-
-def _validate_reflection(obj: dict) -> str | None:
-    # A lesson is stored permanently, so make sure it's well-formed before saving.
-    if obj.get("outcome") not in _OUTCOMES:
-        return f"'outcome' must be exactly one of {', '.join(_OUTCOMES)}."
-    lesson = obj.get("lesson")
-    if not isinstance(lesson, str) or not lesson.strip():
-        return "The JSON is missing a non-empty 'lesson' string."
-    if not isinstance(obj.get("summary"), str) or not obj["summary"].strip():
-        return "The JSON is missing a non-empty 'summary' string."
-    return None
 
 
 class ReflectionAgentService:
@@ -79,20 +58,21 @@ class ReflectionAgentService:
         ]
         result = await LLMService.chat_json(
             messages,
-            fallback={
+            Reflection,
+            fallback=Reflection(
                 # Outcome comes from the P&L, so it's correct even if the model fails.
-                "outcome": "WIN" if pnl > 0 else "LOSS" if pnl < 0 else "BREAKEVEN",
-                "summary": "The reflection agent did not return a usable review of this trade.",
-                "what_went_right": [],
-                "what_went_wrong": [],
-                "lesson": "",
-            },
+                outcome="WIN" if pnl > 0 else "LOSS" if pnl < 0 else "BREAKEVEN",
+                summary="The reflection agent did not return a usable review of this trade.",
+                what_went_right=[],
+                what_went_wrong=[],
+                lesson="(none)",
+            ),
             temperature=0.1,
-            validate=_validate_reflection,
         )
-        reflection = result["data"]
+        reflection: Reflection = result["data"]
         valid = result["valid"]
         stored = False
+        memory_error: str | None = None
 
         if not valid:
             # Store nothing rather than saving a bad lesson as a permanent prior.
@@ -104,12 +84,12 @@ class ReflectionAgentService:
             try:
                 await MemoryService.save(
                     "lesson",
-                    f"[{reflection['outcome']}] {ticker} realized {pnl_pct}% "
+                    f"[{reflection.outcome}] {ticker} realized {pnl_pct}% "
                     f"(buy {trade['avg_buy_price']} -> sell {trade['sell_price']}): "
-                    f"{reflection['lesson']}",
+                    f"{reflection.lesson}",
                     ticker=ticker,
                     metadata={
-                        "outcome": reflection["outcome"],
+                        "outcome": reflection.outcome,
                         "realized_pnl": pnl,
                         "realized_pnl_pct": pnl_pct,
                     },
@@ -117,14 +97,18 @@ class ReflectionAgentService:
                 )
                 stored = True
             except Exception as e:
-                reflection["_memory_error"] = str(e)
+                memory_error = str(e)
                 logger.exception("Could not store the lesson for %s", ticker)
+
+        payload = reflection.model_dump()
+        if memory_error:
+            payload["_memory_error"] = memory_error
 
         return {
             "symbol": ticker,
             "model": result["model"],
             "trade": trade,
-            "reflection": reflection,
+            "reflection": payload,
             # valid = model gave a good review; stored = a lesson actually got saved.
             "valid": valid,
             "stored": stored,

@@ -5,6 +5,7 @@ from urllib.parse import quote_plus
 import feedparser
 from fastapi import HTTPException
 
+from app.agents.schemas import NewsAnalysis
 from app.services.llm_service import LLMService
 from app.core.config import settings
 from app.core.exchanges import news_query, news_country
@@ -21,14 +22,7 @@ def _rss_url(query: str, country: str) -> str:
 
 SYSTEM_PROMPT = (
     "You are AlphaForge News Agent. You are given recent news headlines for a "
-    "single stock. Summarise the news and judge market sentiment. Respond ONLY "
-    "with a valid JSON object — no markdown, no text outside the JSON:\n"
-    "{\n"
-    '  "summary": "3-4 sentence digest of the key themes across the headlines",\n'
-    '  "overall_sentiment": "BULLISH | BEARISH | NEUTRAL",\n'
-    '  "sentiment_score": 0.0,   // -1.0 (very bearish) to 1.0 (very bullish)\n'
-    '  "highlights": ["short bullet of a notable item", "..."]\n'
-    "}\n"
+    "single stock. Summarise the news and judge market sentiment. "
     "This is educational analysis, not financial advice."
 )
 
@@ -90,19 +84,22 @@ class NewsAgentService:
             ]
             result = await LLMService.chat_json(
                 messages,
-                fallback={
-                    "summary": "Could not parse a structured news analysis.",
-                    "overall_sentiment": "NEUTRAL",
-                    "sentiment_score": 0.0,
-                    "highlights": [],
-                },
+                NewsAnalysis,
+                fallback=NewsAnalysis(
+                    summary="Could not parse a structured news analysis.",
+                    overall_sentiment="NEUTRAL",
+                    sentiment_score=0.0,
+                    highlights=[],
+                ),
                 temperature=0.1,
             )
             return {
                 "symbol": ticker.upper(),
                 "model": result["model"],
                 "articles": articles,
-                "analysis": result["data"],
+                # Dumped here: this rides into prompts and SSE, where a model would
+                # serialise as a Python repr.
+                "analysis": result["data"].model_dump(),
             }
         except HTTPException:
             raise

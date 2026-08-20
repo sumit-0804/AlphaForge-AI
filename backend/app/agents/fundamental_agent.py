@@ -2,34 +2,15 @@ import json
 
 from fastapi import HTTPException
 
+from app.agents.schemas import FundamentalRead
 from app.services.llm_service import LLMService
 
 SYSTEM_PROMPT = (
     "You are AlphaForge Fundamental Agent. You are given pre-computed financial "
     "metrics for one company — revenue, debt, cash flow, valuation and a health "
-    "score. Interpret them in plain language. Respond ONLY with a valid JSON "
-    "object — no markdown, no text outside the JSON:\n"
-    "{\n"
-    '  "summary": "3-4 sentence read on the company\'s financial health",\n'
-    '  "revenue_analysis": "1-2 sentences on growth and margins",\n'
-    '  "debt_analysis": "1-2 sentences on leverage and liquidity",\n'
-    '  "cash_flow_analysis": "1-2 sentences on cash generation",\n'
-    '  "strengths": ["short bullet"],\n'
-    '  "weaknesses": ["short bullet"],\n'
-    '  "verdict": "STRONG | MODERATE | WEAK | POOR"\n'
-    "}\n"
+    "score. Interpret them in plain language. "
     "This is educational analysis, not financial advice."
 )
-
-_VERDICTS = ("STRONG", "MODERATE", "WEAK", "POOR")
-
-
-def _validate(obj: dict) -> str | None:
-    if not isinstance(obj.get("summary"), str) or not obj["summary"].strip():
-        return "The JSON is missing a non-empty 'summary' string."
-    if obj.get("verdict") not in _VERDICTS:
-        return f"The 'verdict' field must be exactly one of {', '.join(_VERDICTS)}."
-    return None
 
 
 class FundamentalAgentService:
@@ -63,19 +44,15 @@ class FundamentalAgentService:
             ]
             result = await LLMService.chat_json(
                 messages,
-                fallback={
-                    "summary": "Could not produce a structured fundamental read.",
-                    "revenue_analysis": "",
-                    "debt_analysis": "",
-                    "cash_flow_analysis": "",
-                    "strengths": [],
-                    "weaknesses": [],
-                    "verdict": "MODERATE",
-                },
+                FundamentalRead,
+                fallback=FundamentalRead(
+                    summary="Could not produce a structured fundamental read.",
+                    revenue_analysis="", debt_analysis="", cash_flow_analysis="",
+                    strengths=[], weaknesses=[], verdict="MODERATE",
+                ),
                 temperature=0.1,
-                validate=_validate,
             )
-            return {**result["data"], "valid": result["valid"]}
+            return {**result["data"].model_dump(), "valid": result["valid"]}
         except HTTPException:
             raise
         except Exception as e:

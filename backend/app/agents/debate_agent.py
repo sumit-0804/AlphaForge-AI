@@ -13,32 +13,20 @@ from app.services.fundamentals import FundamentalService
 from app.services.llm_service import LLMService
 from app.services.memory import MemoryService
 from app.agents.news_agent import NewsAgentService
-from app.agents.util import _parse
+from app.agents.schemas import DebateArgument, DebateDecision, DebateRebuttal
 from app.core.exchanges import get_exchange
 from app.models.recommendation import Recommendation
 
 BULL_PROMPT = (
     "You are the BULL analyst at AlphaForge. Given the evidence, argue the "
     "strongest possible BUY case for this stock. Be specific and cite the "
-    "numbers. Respond ONLY with a valid JSON object — no markdown:\n"
-    "{\n"
-    '  "stance": "BULL",\n'
-    '  "arguments": ["specific point citing data", "..."],\n'
-    '  "key_point": "your single strongest argument"\n'
-    "}\n"
-    "This is educational analysis, not financial advice."
+    "numbers. This is educational analysis, not financial advice."
 )
 
 BEAR_PROMPT = (
     "You are the BEAR analyst at AlphaForge. Given the evidence, argue the "
     "strongest possible case to AVOID or SELL this stock. Be specific and cite "
-    "the numbers. Respond ONLY with a valid JSON object — no markdown:\n"
-    "{\n"
-    '  "stance": "BEAR",\n'
-    '  "arguments": ["specific point citing data", "..."],\n'
-    '  "key_point": "your single strongest argument"\n'
-    "}\n"
-    "This is educational analysis, not financial advice."
+    "the numbers. This is educational analysis, not financial advice."
 )
 
 MODERATOR_PROMPT = (
@@ -55,17 +43,12 @@ MODERATOR_PROMPT = (
     "history informs the call (e.g. repeating a past mistake or confirming a prior "
     "thesis). The evidence may also include a 'risk' block (volatility, beta, "
     "risk_level): a high-risk name does not change whether to buy or sell, but it "
-    "should make you more cautious about a HIGH confidence rating. Issue a final, "
-    "explainable decision. Respond ONLY with a valid JSON object — no markdown:\n"
-    "{\n"
-    '  "decision": "BUY | HOLD | SELL",\n'
-    '  "confidence": "LOW | MEDIUM | HIGH",\n'
-    '  "rationale": "2-3 sentences explaining the verdict",\n'
-    '  "bull_summary": "1 sentence steelman of the bull case",\n'
-    '  "bear_summary": "1 sentence steelman of the bear case",\n'
-    '  "key_catalysts": ["what could prove the bull right"],\n'
-    '  "key_risks": ["what could prove the bear right"]\n'
-    "}\n"
+    "should make you more cautious about a HIGH confidence rating. The evidence may "
+    "also carry a 'research' block — an analyst's earlier written view on this stock — "
+    "and a 'fundamentals.narrative' block reading the financials in plain language. "
+    "Weigh both as inputs alongside everything else; neither is a verdict to defer to, "
+    "and you may overrule either where the debate or the numbers contradict it. "
+    "Issue a final, explainable decision. "
     "This is educational analysis, not financial advice."
 )
 
@@ -76,14 +59,19 @@ logger = logging.getLogger(__name__)
 _CROSS_TICKER_K = 3
 
 
-def _validate_decision(obj: dict) -> str | None:
-    # A fallback HOLD looks identical to a real one, so make the model get it right.
-    if obj.get("decision") not in ("BUY", "HOLD", "SELL"):
-        return "The 'decision' field must be exactly one of BUY, HOLD or SELL."
-    if obj.get("confidence") not in ("LOW", "MEDIUM", "HIGH"):
-        return "The 'confidence' field must be exactly one of LOW, MEDIUM or HIGH."
-    if not isinstance(obj.get("rationale"), str) or not obj["rationale"].strip():
-        return "The JSON is missing a non-empty 'rationale' string."
+def _debate_event(node: str, data: dict) -> dict | None:
+    # One mapping from debate-graph node to UI event, shared by debate() and debate_stream().
+    if node == "opening":
+        return {"type": "opening", "round": data.get("round"),
+                "bull": data.get("bull"), "bear": data.get("bear")}
+    if node == "rebut":
+        return {"type": "rebuttal", "round": data.get("round"),
+                "bull": data.get("bull"), "bear": data.get("bear"),
+                "converged": data.get("converged")}
+    if node == "moderate":
+        return {"type": "decision", "model": data.get("model"),
+                "decision": data.get("decision"),
+                "decision_valid": data.get("decision_valid", False)}
     return None
 
 
@@ -94,16 +82,8 @@ def _rebuttal_prompt(stance: str, goal: str) -> str:
         f"You are arguing the {goal} case. You are now shown the opposing analyst's "
         "latest argument. Directly REBUT their strongest points, citing specific "
         "numbers from the evidence, and sharpen your own case. Be intellectually "
-        "honest: if the opposing case is genuinely decisive, concede. Respond ONLY "
-        "with a valid JSON object — no markdown:\n"
-        "{\n"
-        f'  "stance": "{stance}",\n'
-        '  "rebuttals": ["direct counter to a specific opposing point, citing data"],\n'
-        '  "arguments": ["your sharpened key points"],\n'
-        '  "key_point": "your single strongest argument after this exchange",\n'
-        '  "has_new_points": true,   // false if you have nothing material left to add\n'
-        '  "concede": false          // true only if the opposing case is decisively stronger\n'
-        "}\n"
+        "honest: if the opposing case is genuinely decisive, concede. "
+        f"Report your stance as {stance}. "
         "This is educational analysis, not financial advice."
     )
 
@@ -223,7 +203,7 @@ class DebateAgentService:
         return status
 
     @classmethod
-    async def _recall_memory(
+    async def recall_memory(
         cls, ticker: str, user_id: str, context: dict | None = None
     ) -> dict:
         # Pull what we've learned about this stock before arguing the case.
@@ -295,15 +275,17 @@ class DebateAgentService:
                 "content": (
                     f"Evidence for {ticker}:\n"
                     f"{json.dumps(context, indent=2, default=str)}\n\n"
-                    "Return your JSON now."
+                    "Make your case now."
                 ),
             },
         ]
-        result = await LLMService.chat(messages, temperature=0.1)
-        return _parse(
-            result["content"],
-            {"stance": stance, "arguments": [result["content"].strip()], "key_point": ""},
+        result = await LLMService.chat_json(
+            messages,
+            DebateArgument,
+            fallback=DebateArgument(stance=stance, arguments=[], key_point=""),
+            temperature=0.1,
         )
+        return result["data"].model_dump()
 
     @classmethod
     async def _rebut(
@@ -323,44 +305,66 @@ class DebateAgentService:
                     f"Evidence for {ticker}:\n{json.dumps(context, indent=2, default=str)}\n\n"
                     f"Your previous argument:\n{json.dumps(own_last, indent=2)}\n\n"
                     f"Opposing analyst's latest argument:\n{json.dumps(opponent_last, indent=2)}\n\n"
-                    "Return your JSON rebuttal now."
+                    "Rebut them now."
                 ),
             },
         ]
-        result = await LLMService.chat(messages, temperature=0.1)
-        return _parse(
-            result["content"],
-            {
-                "stance": stance,
-                "rebuttals": [result["content"].strip()],
-                "arguments": own_last.get("arguments", []),
-                "key_point": own_last.get("key_point", ""),
-                # If the reply was unparseable, assume nothing new so the debate can end.
-                "has_new_points": False,
-                "concede": False,
-            },
+        result = await LLMService.chat_json(
+            messages,
+            DebateRebuttal,
+            # Only reached after retries; assume nothing new so the debate can end.
+            fallback=DebateRebuttal(
+                stance=stance,
+                rebuttals=[],
+                arguments=own_last.get("arguments", []),
+                key_point=own_last.get("key_point", ""),
+                has_new_points=False,
+                concede=False,
+            ),
+            temperature=0.1,
         )
+        return result["data"].model_dump()
+
+    @classmethod
+    async def _context_for(
+        cls, ticker: str, user_id: str, include_news: bool, risk: dict | None
+    ) -> dict:
+        """Gather evidence for a standalone debate. The workflow passes its own instead."""
+        context = await cls._gather_context(ticker, include_news)
+        if risk:
+            context["risk"] = risk
+        # Recall past lessons and calls so the committee argues with memory, not blind.
+        context["memory"] = await cls.recall_memory(ticker, user_id, context=context)
+        return context
 
     @classmethod
     async def debate(
         cls, ticker: str, user_id: str, include_news: bool = True, max_rounds: int = 2,
-        risk: dict | None = None,
+        risk: dict | None = None, context: dict | None = None, on_event=None,
     ) -> dict:
+        """Run the committee. `context` skips gathering; `on_event` streams each round."""
         try:
-            context = await cls._gather_context(ticker, include_news)
-            if risk:
-                context["risk"] = risk
-            # Recall past lessons and calls so the committee argues with memory, not blind.
-            context["memory"] = await cls._recall_memory(ticker, user_id, context=context)
+            if context is None:
+                context = await cls._context_for(ticker, user_id, include_news, risk)
+            if on_event:
+                on_event({"type": "memory", "memory": context.get("memory")})
 
             # Loop: opening -> rebuttals -> moderate, cycling until they converge or hit max_rounds.
-            final = await _debate_graph.ainvoke(
+            final: dict = {}
+            async for mode, chunk in _debate_graph.astream(
                 {
                     "ticker": ticker.upper(),
                     "context": context,
                     "max_rounds": max(1, max_rounds),
-                }
-            )
+                },
+                stream_mode=["values", "updates"],
+            ):
+                if mode == "values":
+                    final = chunk
+                elif on_event:
+                    for node, data in chunk.items():
+                        if ev := _debate_event(node, data):
+                            on_event(ev)
 
             transcript = final.get("transcript", [])
             return {
@@ -390,13 +394,8 @@ class DebateAgentService:
         try:
             yield {"type": "status", "phase": "evidence",
                    "message": f"Gathering evidence for {ticker}…"}
-            context = await cls._gather_context(ticker, include_news)
-            if risk:
-                context["risk"] = risk
-
-            memory = await cls._recall_memory(ticker, user_id, context=context)
-            context["memory"] = memory
-            yield {"type": "memory", "memory": memory}
+            context = await cls._context_for(ticker, user_id, include_news, risk)
+            yield {"type": "memory", "memory": context.get("memory")}
 
             yield {"type": "status", "phase": "debate",
                    "message": "Committee convening — opening statements…"}
@@ -407,17 +406,8 @@ class DebateAgentService:
                 stream_mode="updates",
             ):
                 for node, data in update.items():
-                    if node == "opening":
-                        yield {"type": "opening", "round": data.get("round"),
-                               "bull": data.get("bull"), "bear": data.get("bear")}
-                    elif node == "rebut":
-                        yield {"type": "rebuttal", "round": data.get("round"),
-                               "bull": data.get("bull"), "bear": data.get("bear"),
-                               "converged": data.get("converged")}
-                    elif node == "moderate":
-                        yield {"type": "decision", "model": data.get("model"),
-                               "decision": data.get("decision"),
-                               "decision_valid": data.get("decision_valid", False)}
+                    if ev := _debate_event(node, data):
+                        yield ev
 
             yield {"type": "done", "symbol": ticker}
         except Exception as e:
@@ -507,24 +497,24 @@ async def _moderate_node(state: DebateState) -> dict:
     ]
     result = await LLMService.chat_json(
         mod_messages,
-        fallback={
-            "decision": "HOLD",
-            "confidence": "LOW",
-            "rationale": (
+        DebateDecision,
+        fallback=DebateDecision(
+            decision="HOLD",
+            confidence="LOW",
+            rationale=(
                 "The moderator did not return a well-formed verdict after retries. "
                 "Defaulting to HOLD — treat this as a failed analysis, not a judgement."
             ),
-            "bull_summary": bull.get("key_point", ""),
-            "bear_summary": bear.get("key_point", ""),
-            "key_catalysts": [],
-            "key_risks": [],
-        },
+            bull_summary=bull.get("key_point", ""),
+            bear_summary=bear.get("key_point", ""),
+            key_catalysts=[],
+            key_risks=[],
+        ),
         temperature=0.1,
-        validate=_validate_decision,
     )
     # decision_valid=False means this HOLD is a fallback, not a real verdict.
     return {
-        "decision": result["data"],
+        "decision": result["data"].model_dump(),
         "model": result["model"],
         "decision_valid": result["valid"],
         "decision_attempts": result["attempts"],

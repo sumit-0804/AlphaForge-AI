@@ -12,6 +12,7 @@ import json
 
 from fastapi import HTTPException
 
+from app.agents.schemas import ScannerRanking, ScannerTriage
 from app.services.llm_service import LLMService
 
 SYSTEM_PROMPT = (
@@ -20,34 +21,17 @@ SYSTEM_PROMPT = (
     "indicator readings behind it. Rank them by how compelling the setup is, and "
     "say plainly what the pattern suggests and what would invalidate it. Be "
     "sceptical: a high rule score is not automatically a good setup, and you "
-    "should mark weak or conflicted ones as such. Respond ONLY with a valid JSON "
-    "object — no markdown:\n"
-    "{\n"
-    '  "ranked": [\n'
-    "    {\n"
-    '      "symbol": "TICKER",\n'
-    '      "rank": 1,\n'
-    '      "conviction": "HIGH | MEDIUM | LOW",\n'
-    '      "thesis": "1-2 sentences on what the setup implies, citing the numbers",\n'
-    '      "invalidation": "what would prove this setup wrong",\n'
-    '      "worth_deep_analysis": true\n'
-    "    }\n"
-    "  ],\n"
-    '  "summary": "1-2 sentences on the overall tone of this scan"\n'
-    "}\n"
+    "should mark weak or conflicted ones as such. "
     "Rank EVERY symbol you are given, exactly once. "
     "This is educational analysis, not financial advice."
 )
 
 
 def _make_validator(symbols: set[str]):
-    def _validate(obj: dict) -> str | None:
-        ranked = obj.get("ranked")
-        if not isinstance(ranked, list) or not ranked:
-            return "The 'ranked' field must be a non-empty array."
-        got = {r.get("symbol") for r in ranked if isinstance(r, dict)}
-        missing = symbols - got
-        unknown = got - symbols
+    # Cross-field rule the schema cannot carry: it depends on this scan's candidates.
+    def _validate(obj: ScannerTriage) -> str | None:
+        got = {r.symbol for r in obj.ranked}
+        missing, unknown = symbols - got, got - symbols
         # The model must cover exactly the given candidates — no drops, no invented tickers.
         if missing:
             return f"These symbols are missing from 'ranked': {sorted(missing)}."
@@ -80,24 +64,25 @@ class ScannerAgentService:
             # Fall back to the rule-based ranking if the model can't return a clean list.
             result = await LLMService.chat_json(
                 messages,
-                fallback={
-                    "ranked": [
-                        {
-                            "symbol": c["symbol"],
-                            "rank": i + 1,
-                            "conviction": "MEDIUM",
-                            "thesis": f"Rule-based signals: {', '.join(c.get('signals', []))}.",
-                            "invalidation": "",
-                            "worth_deep_analysis": True,
-                        }
+                ScannerTriage,
+                fallback=ScannerTriage(
+                    ranked=[
+                        ScannerRanking(
+                            symbol=c["symbol"],
+                            rank=i + 1,
+                            conviction="MEDIUM",
+                            thesis=f"Rule-based signals: {', '.join(c.get('signals', []))}.",
+                            invalidation="",
+                            worth_deep_analysis=True,
+                        )
                         for i, c in enumerate(candidates)
                     ],
-                    "summary": "Ranked by rule score; the agent's read was unavailable.",
-                },
+                    summary="Ranked by rule score; the agent's read was unavailable.",
+                ),
                 temperature=0.1,
                 validate=_make_validator(symbols),
             )
-            return {**result["data"], "valid": result["valid"]}
+            return {**result["data"].model_dump(), "valid": result["valid"]}
         except HTTPException:
             raise
         except Exception as e:
