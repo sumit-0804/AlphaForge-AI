@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.router import api_router
 from app.core.config import settings
 from app.db.mongo import init_db
+from app.graph.workflow import init_workflow
 
 # uvicorn adds no root handler, so set one up or our INFO logs get dropped.
 logging.basicConfig(
@@ -28,6 +29,8 @@ async def lifespan(_:FastAPI):
             "Set JWT_SECRET before exposing this instance."
         )
     await init_db()
+    # Compiled here, not at import: the graph's checkpointer needs a live Mongo client.
+    await init_workflow()
     yield
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)

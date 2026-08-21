@@ -1,19 +1,32 @@
 import asyncio
+from datetime import datetime, timezone
 from operator import add
 from typing import Annotated, TypedDict
+from uuid import uuid4
 
 from fastapi import HTTPException
+from langgraph.config import get_stream_writer
 from langgraph.graph import StateGraph, START, END
 
 from app.agents.research_agent import ResearchAgentService
 from app.agents.news_agent import NewsAgentService
 from app.agents.debate_agent import DebateAgentService
 from app.agents.fundamental_agent import FundamentalAgentService
+from app.core.exchanges import get_exchange
+from app.db.mongo import client as mongo_client
+from app.core.config import settings
+from app.graph.checkpointer import MongoCheckpointer
+from app.services.market_data import MarketDataService
 from app.services.technical_analysis import TechnicalAnalysisService
 from app.services.fundamentals import FundamentalService
 from app.services.risk import RiskService
 from app.services.memory import MemoryService
 from app.models.recommendation import Recommendation
+
+# The parallel data-gathering nodes. Everything downstream reads their output from
+# state rather than fetching its own copy.
+GATHER_NODES = frozenset({"profile", "technical", "fundamental", "news", "risk"})
+
 
 class AnalysisState(TypedDict, total=False):
     ticker: str
@@ -21,12 +34,15 @@ class AnalysisState(TypedDict, total=False):
     # rides in state so every node can be scoped without changing the graph shape.
     user_id: str
     include_news: bool
+    max_rounds: int
+    profile: dict
     research: dict
     technical: dict
     fundamental: dict
     fundamental_narrative: dict
     news: dict
     risk: dict
+    memory: dict
     consensus: dict
     debate: dict
     recommendation: dict
@@ -46,15 +62,44 @@ def _risk_caps_confidence(risk: dict | None) -> bool:
            (beta is not None and beta >= _RISK_CONF_CAP_BETA)
 
 
-async def research_node(state: AnalysisState) -> dict:
+def _evidence(state: AnalysisState) -> dict:
+    """The one bundle every downstream agent argues from, in the shape the Bull, Bear and
+    moderator prompts expect. Without it the debate refetched and never saw news or research."""
+    fundamental = dict(state.get("fundamental") or {})
+    narrative = state.get("fundamental_narrative")
+    if narrative:
+        fundamental["narrative"] = narrative
+
+    return {
+        "profile": state.get("profile") or {},
+        "technical": state.get("technical") or {},
+        "fundamentals": fundamental,
+        "news": (state.get("news") or {}).get("analysis"),
+        "research": (state.get("research") or {}).get("report"),
+        "risk": state.get("risk"),
+        "memory": state.get("memory"),
+    }
+
+
+async def profile_node(state: AnalysisState) -> dict:
     try:
-        return {
-            "research": await ResearchAgentService.research(
-                state["ticker"], state["user_id"]
-            )
-        }
+        info = await asyncio.to_thread(MarketDataService.get_stock_info, state["ticker"])
     except Exception as e:
-        return {"errors": [f"research: {e}"]}
+        return {"errors": [f"profile: {e}"]}
+
+    ex = get_exchange(state["ticker"])
+    return {
+        "profile": {
+            "symbol": info.get("symbol"),
+            "name": info.get("longName") or info.get("shortName"),
+            "sector": info.get("sector"),
+            "currentPrice": info.get("currentPrice"),
+            "fiftyTwoWeekHigh": info.get("fiftyTwoWeekHigh"),
+            "fiftyTwoWeekLow": info.get("fiftyTwoWeekLow"),
+            "currency": info.get("currency") or ex.currency or "USD",
+        }
+    }
+
 
 async def technical_node(state: AnalysisState) -> dict:
     try:
@@ -83,6 +128,7 @@ async def fundamental_node(state: AnalysisState) -> dict:
         out["errors"] = [f"fundamental_narrative: {e}"]
     return out
 
+
 async def news_node(state: AnalysisState) -> dict:
     if not state.get("include_news", True):
         return {}
@@ -91,21 +137,58 @@ async def news_node(state: AnalysisState) -> dict:
     except Exception as e:
         return {"errors": [f"news: {e}"]}
 
+
 async def risk_node(state: AnalysisState) -> dict:
     try:
         return {"risk": await RiskService.analyze_ticker(state["ticker"])}
     except Exception as e:
         return {"errors": [f"risk: {e}"]}
 
-async def debate_node(state: AnalysisState) -> dict:
+
+async def recall_node(state: AnalysisState) -> dict:
+    """Long-term memory, recalled once into state instead of privately inside the debate."""
+    # Runs after the gather fan-out because the cross-ticker query is built from
+    # sector, trend and health — it needs the numbers to describe the setup.
     try:
-        # News runs in its own node, so skip it here to avoid summarising it twice.
-        # Risk is already computed, so hand it over rather than refetching.
+        return {"memory": await DebateAgentService.recall_memory(
+            state["ticker"], state["user_id"], context=state
+        )}
+    except Exception as e:
+        return {
+            "memory": {
+                "prior_lessons": [], "cross_ticker_lessons": [],
+                "past_recommendations": [], "status": "unavailable",
+            },
+            "errors": [f"recall: {e}"],
+        }
+
+
+async def research_node(state: AnalysisState) -> dict:
+    # Handed the gathered evidence, so it usually answers in one call instead of
+    # re-fetching the same data through its own tool loop.
+    try:
+        return {
+            "research": await ResearchAgentService.research(
+                state["ticker"], state["user_id"], evidence=_evidence(state)
+            )
+        }
+    except Exception as e:
+        return {"errors": [f"research: {e}"]}
+
+
+async def debate_node(state: AnalysisState) -> dict:
+    # Emits each round as it happens so the streaming endpoint can forward it live.
+    writer = get_stream_writer()
+    try:
         return {"debate": await DebateAgentService.debate(
-            state["ticker"], state["user_id"], include_news=False, risk=state.get("risk")
+            state["ticker"], state["user_id"],
+            context=_evidence(state),
+            max_rounds=state.get("max_rounds", 2),
+            on_event=writer,
         )}
     except Exception as e:
         return {"errors": [f"debate: {e}"]}
+
 
 # If every signal agrees, skip the expensive debate and decide directly.
 
@@ -139,12 +222,19 @@ def _signal_votes(state: AnalysisState) -> dict:
     return votes
 
 
-# Research reads the same data as the other nodes, so its vote is shown but not
+# Research reads the same evidence as the other nodes, so its vote is shown but not
 # counted toward unanimity — only a dissent from it forces the debate.
 _DERIVED_SIGNALS = {"research"}
 
 
-def _consensus(votes: dict) -> dict:
+def _gather_failed(state: AnalysisState) -> list[str]:
+    # A crashed gather node must not shrink the vote count into a false unanimity.
+    prefixes = tuple(f"{n}:" for n in GATHER_NODES)
+    return [e for e in state.get("errors", []) if e.startswith(prefixes)]
+
+
+def _consensus(state: AnalysisState) -> dict:
+    votes = _signal_votes(state)
     independent = {
         k: v for k, v in votes.items() if k not in _DERIVED_SIGNALS and v != 0
     }
@@ -157,7 +247,12 @@ def _consensus(votes: dict) -> dict:
     research = votes.get("research", 0)
     dissent = bool(unanimous and research and (research > 0) != (total > 0))
 
-    skip_debate = unanimous and not dissent
+    # Risk has magnitude, not direction, so it vetoes the fast path rather than voting:
+    # a high-vol or high-beta name always gets the committee, however aligned the signals.
+    risk_veto = _risk_caps_confidence(state.get("risk"))
+    incomplete = _gather_failed(state)
+
+    skip_debate = unanimous and not dissent and not risk_veto and not incomplete
     action = confidence = None
     if skip_debate:
         action = "BUY" if total > 0 else "SELL"
@@ -170,6 +265,8 @@ def _consensus(votes: dict) -> dict:
         "signals": n,
         "unanimous": unanimous,
         "research_dissent": dissent,
+        "risk_veto": risk_veto,
+        "incomplete": incomplete,
         "route": "quick" if skip_debate else "debate",
         "action": action,
         "confidence": confidence,
@@ -177,7 +274,7 @@ def _consensus(votes: dict) -> dict:
 
 
 async def gate_node(state: AnalysisState) -> dict:
-    return {"consensus": _consensus(_signal_votes(state))}
+    return {"consensus": _consensus(state)}
 
 
 def route_after_gate(state: AnalysisState) -> str:
@@ -186,22 +283,8 @@ def route_after_gate(state: AnalysisState) -> str:
 
 
 async def quick_decision_node(state: AnalysisState) -> dict:
-    # Signals agree, so decide directly but still recall memory for learned_context.
+    # Signals agree, so decide directly. Memory was already recalled into state.
     c = state.get("consensus") or {}
-    ticker = state["ticker"]
-    try:
-        # State works as the situation key — _recall_memory reads technical/fundamental from it.
-        memory = await DebateAgentService._recall_memory(
-            ticker, state["user_id"], context=state
-        )
-    except Exception:
-        memory = {
-            "prior_lessons": [],
-            "cross_ticker_lessons": [],
-            "past_recommendations": [],
-            "status": "unavailable",
-        }
-
     direction = "bullish" if c.get("score", 0) > 0 else "bearish"
     decision = {
         "decision": c.get("action", "HOLD"),
@@ -216,9 +299,9 @@ async def quick_decision_node(state: AnalysisState) -> dict:
     }
     return {
         "debate": {
-            "symbol": ticker,
+            "symbol": state["ticker"],
             "model": None,
-            "memory": memory,
+            "memory": state.get("memory"),
             "skipped": True,
             "rounds": 0,
             "converged": True,
@@ -261,6 +344,7 @@ def _technical_reasons(t: dict | None) -> list[str]:
 
     return reasons
 
+
 async def recommendation_node(state: AnalysisState) -> dict:
     decision = (state.get("debate") or {}).get("decision") or {}
     research = (state.get("research") or {}).get("report") or {}
@@ -272,7 +356,7 @@ async def recommendation_node(state: AnalysisState) -> dict:
     technical = state.get("technical") or {}
 
     checks = health.get("checks", [])
-    memory = debate.get("memory") or {}
+    memory = state.get("memory") or {}
     consensus = state.get("consensus") or {}
     risk = state.get("risk") or {}
 
@@ -333,6 +417,9 @@ async def recommendation_node(state: AnalysisState) -> dict:
             "independent_votes": consensus.get("independent_votes", {}),
             "unanimous": consensus.get("unanimous", False),
             "research_dissent": consensus.get("research_dissent", False),
+            # Why a unanimous read still went to committee.
+            "risk_veto": consensus.get("risk_veto", False),
+            "incomplete": consensus.get("incomplete", []),
         },
     }
 
@@ -354,28 +441,92 @@ async def recommendation_node(state: AnalysisState) -> dict:
     }
     return {"recommendation": recommendation}
 
-def build_workflow():
+
+async def persist_node(state: AnalysisState) -> dict:
+    """Save the call and file it into long-term memory. Both entrypoints share this."""
+    rec = state.get("recommendation") or {}
+    if not rec:
+        return {}
+
+    ticker, user_id = state["ticker"], state["user_id"]
+    consensus = state.get("consensus") or {}
+    errors: list[str] = []
+
+    try:
+        await Recommendation(
+            user_id=user_id,
+            symbol=ticker,
+            action=rec.get("action", "HOLD"),
+            confidence=rec.get("confidence", "LOW"),
+            rationale=rec.get("rationale"),
+            explanation=rec.get("explanation", {}),
+        ).insert()
+    except Exception as e:
+        errors.append(f"persist: {e}")
+
+    try:
+        await MemoryService.save(
+            "agent_output",
+            f"{ticker} recommendation: {rec.get('action')} "
+            f"({rec.get('confidence')}) — {rec.get('rationale')}",
+            ticker=ticker,
+            metadata={
+                "action": rec.get("action"),
+                "confidence": rec.get("confidence"),
+                # Lets a later trade-close reflection cite which path produced the call.
+                "route": consensus.get("route"),
+                "unanimous": consensus.get("unanimous"),
+            },
+            user_id=user_id,
+        )
+    except Exception as e:
+        errors.append(f"memory: {e}")
+
+    report = (state.get("research") or {}).get("report") or {}
+    if report.get("summary"):
+        try:
+            await MemoryService.save(
+                "research_report",
+                f"{ticker} research: {report['summary']} "
+                f"View: {report.get('recommendation')} ({report.get('confidence')}).",
+                ticker=ticker,
+                metadata={"recommendation": report.get("recommendation")},
+                user_id=user_id,
+            )
+        except Exception as e:
+            errors.append(f"memory_research: {e}")
+
+    return {"errors": errors} if errors else {}
+
+
+def build_workflow(checkpointer=None):
     g = StateGraph(AnalysisState)
-    g.add_node("research", research_node)
+    g.add_node("profile", profile_node)
     g.add_node("technical", technical_node)
     g.add_node("fundamental", fundamental_node)
     g.add_node("news", news_node)
     g.add_node("risk", risk_node)
+    g.add_node("recall", recall_node)
+    g.add_node("research", research_node)
     g.add_node("gate", gate_node)
     g.add_node("debate", debate_node)
     g.add_node("quick_decision", quick_decision_node)
     g.add_node("recommendation", recommendation_node)
+    g.add_node("persist", persist_node)
 
-    #                      ┌─ research ───┐
-    #                      ├─ technical ──┤          ┌─(contested)→ debate ─┐
-    #  START ─(fan-out)────┼─ fundamental ┼─→ gate ─┤                      ├─→ recommendation → END
-    #                      ├─ news ───────┤          └─(unanimous)→ quick_decision ┘
-    #                      └─ risk ───────┘
-
-    # Run the data-gathering nodes at once; gate waits for all of them.
-    for node in ("research", "technical", "fundamental", "news", "risk"):
+    #        ┌─ profile ─────┐
+    #        ├─ technical ───┤                                  ┌─(contested)→ debate ─────┐
+    # START ─┼─ fundamental ─┼→ recall → research → gate ──────┤                           ├→ recommendation → persist → END
+    #        ├─ news ────────┤                                  └─(unanimous)→ quick_decision ┘
+    #        └─ risk ────────┘
+    # recall follows the fan-out because its cross-ticker query needs the gathered numbers;
+    # research follows recall so it argues from the same evidence everyone else sees.
+    for node in GATHER_NODES:
         g.add_edge(START, node)
-        g.add_edge(node, "gate")
+        g.add_edge(node, "recall")
+
+    g.add_edge("recall", "research")
+    g.add_edge("research", "gate")
 
     # Route to the committee only when signals conflict.
     g.add_conditional_edges(
@@ -385,40 +536,89 @@ def build_workflow():
     )
     g.add_edge("debate", "recommendation")
     g.add_edge("quick_decision", "recommendation")
-    g.add_edge("recommendation", END)
+    g.add_edge("recommendation", "persist")
+    g.add_edge("persist", END)
 
-    return g.compile()
+    return g.compile(checkpointer=checkpointer)
 
-workflow = build_workflow()
+
+_workflow = None
+_checkpointer: MongoCheckpointer | None = None
+
+
+async def init_workflow() -> None:
+    """Compile the graph against a live checkpointer. Called once from the app lifespan."""
+    global _workflow, _checkpointer
+    _checkpointer = MongoCheckpointer(
+        mongo_client,
+        settings.mongodb_db,
+        checkpoint_collection=settings.checkpoint_collection,
+        writes_collection=settings.checkpoint_writes_collection,
+        ttl=settings.checkpoint_ttl_seconds,
+    )
+    await _checkpointer.setup()
+    _workflow = build_workflow(_checkpointer)
+
+
+def get_workflow():
+    if _workflow is None:
+        raise RuntimeError("Workflow not initialised — init_workflow() runs at startup.")
+    return _workflow
+
+
+def _thread_id(user_id: str, ticker: str, fresh: bool) -> str:
+    # user_id leads so no account can resume another's thread; the date scopes a run to
+    # one trading day, and `fresh` opts out of resuming altogether.
+    if fresh:
+        return f"{user_id}:{ticker}:{uuid4().hex}"
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return f"{user_id}:{ticker}:{day}"
+
+
+def _initial_state(ticker: str, user_id: str, include_news: bool, rounds: int) -> AnalysisState:
+    return {
+        "ticker": ticker.upper(),
+        "user_id": user_id,
+        "include_news": include_news,
+        "max_rounds": max(1, rounds),
+    }
+
+
+# The state key each pipeline node fills, so a resumed run can tell the UI what is
+# already done rather than showing finished stages as still running.
+_NODE_STATE_KEY = {
+    "profile": "profile", "technical": "technical", "fundamental": "fundamental",
+    "news": "news", "risk": "risk", "recall": "memory", "research": "research",
+}
+
+
+async def _pending_snapshot(graph, config):
+    """The thread's state if it has unfinished work, else None. Only `None` as input
+    resumes: pass the input again and LangGraph restarts from START, re-paying for everything."""
+    try:
+        snap = await graph.aget_state(config)
+    except Exception:
+        return None
+    return snap if snap and snap.next else None
+
 
 class WorkflowService:
     # Runs every agent through LangGraph to produce one recommendation.
     @staticmethod
-    async def run(ticker: str, user_id: str, include_news: bool = True) -> dict:
+    async def run(
+        ticker: str, user_id: str, include_news: bool = True, rounds: int = 2,
+        fresh: bool = False,
+    ) -> dict:
+        ticker = ticker.upper()
         try:
-            final = await workflow.ainvoke(
-                {"ticker": ticker.upper(), "user_id": user_id, "include_news": include_news}
-            )
-            rec = final.get("recommendation") or {}
-            if rec:
-                await Recommendation(
-                    user_id=user_id,
-                    symbol=ticker.upper(),
-                    action=rec.get("action", "HOLD"),
-                    confidence=rec.get("confidence", "LOW"),
-                    rationale=rec.get("rationale"),
-                    explanation=rec.get("explanation", {}),
-                ).insert()
-                await MemoryService.save(
-                    "agent_output",
-                    f"{ticker.upper()} recommendation: {rec.get('action')} "
-                    f"({rec.get('confidence')}) — {rec.get('rationale')}",
-                    ticker=ticker,
-                    metadata={"action": rec.get("action"), "confidence": rec.get("confidence")},
-                    user_id=user_id,
-                )
+            graph = get_workflow()
+            config = {"configurable": {"thread_id": _thread_id(user_id, ticker, fresh)}}
+            state = _initial_state(ticker, user_id, include_news, rounds)
+            resuming = await _pending_snapshot(graph, config)
+
+            final = await graph.ainvoke(None if resuming else state, config)
             return {
-                "symbol": ticker.upper(),
+                "symbol": ticker,
                 "recommendation": final.get("recommendation"),
                 "research": final.get("research"),
                 "technical": final.get("technical"),
@@ -432,124 +632,96 @@ class WorkflowService:
             raise
         except Exception as e:
             raise HTTPException(502, f"Workflow failed: {e}")
-    
+
     @staticmethod
-    async def run_stream(ticker: str, user_id: str, include_news: bool = True, rounds: int = 2):
-        """Run the same pipeline as run() but stream a progress event at each stage for the UI."""
+    async def run_stream(
+        ticker: str, user_id: str, include_news: bool = True, rounds: int = 2,
+        fresh: bool = False,
+    ):
+        """Stream the same graph run() executes, translating node updates into UI events."""
         ticker = ticker.upper()
-        state: AnalysisState = {
-            "ticker": ticker, "user_id": user_id, "include_news": include_news
-        }
         try:
-            yield {"type": "status", "message": f"Analysing {ticker}…"}
+            graph = get_workflow()
+            config = {"configurable": {"thread_id": _thread_id(user_id, ticker, fresh)}}
+            state = _initial_state(ticker, user_id, include_news, rounds)
+            resuming = await _pending_snapshot(graph, config)
+            done = resuming.values if resuming else {}
 
-            gather = {
-                "research": research_node,
-                "technical": technical_node,
-                "fundamental": fundamental_node,
-                "news": news_node,
-                "risk": risk_node,
-            }
-            active = {
-                name: fn for name, fn in gather.items()
-                if not (name == "news" and not include_news)
-            }
-            for name in active:
-                yield {"type": "node", "node": name, "status": "running"}
+            yield {"type": "status",
+                   "message": f"Resuming {ticker}…" if resuming else f"Analysing {ticker}…"}
 
-            async def _run(name, fn):
-                return name, await fn(state)
-
-            # Run the gathering nodes at once and emit each as it finishes.
-            pending = [asyncio.create_task(_run(n, f)) for n, f in active.items()]
-            for fut in asyncio.as_completed(pending):
-                name, res = await fut
-                # A node can return data and a warning; keep the data, only flag error if empty.
-                res = dict(res)
-                errs = res.pop("errors", None)
-                if errs:
-                    state["errors"] = state.get("errors", []) + errs
-                if res:
-                    state.update(res)
+            # Replay what a previous attempt already finished, so the UI does not show
+            # completed stages as still running.
+            for name, key in _NODE_STATE_KEY.items():
+                if name == "news" and not include_news:
+                    continue
+                if key in done:
                     yield {"type": "node", "node": name, "status": "done",
-                           "data": res, "warnings": errs or []}
-                else:
-                    yield {"type": "node", "node": name, "status": "error", "error": errs or []}
+                           "data": {key: done[key]}, "warnings": []}
+                elif name in GATHER_NODES:
+                    yield {"type": "node", "node": name, "status": "running"}
+            if done.get("consensus"):
+                yield {"type": "routing", "consensus": done["consensus"]}
 
-            consensus = _consensus(_signal_votes(state))
-            state["consensus"] = consensus
-            yield {"type": "routing", "consensus": consensus}
+            debate_started = False
+            errors: list[str] = list(done.get("errors", []))
+            # Seeded with what is already settled: replayed nodes, and news when skipped.
+            finished = {n for n, k in _NODE_STATE_KEY.items() if k in done}
+            if not include_news:
+                finished.add("news")
 
-            if consensus["route"] == "quick":
-                qd = await quick_decision_node(state)
-                state.update(qd)
-                yield {"type": "quick_decision",
-                       "decision": qd["debate"]["decision"],
-                       "memory": qd["debate"]["memory"]}
-            else:
-                # Stream the committee live while rebuilding the debate dict the rec node needs.
-                yield {"type": "debate_start"}
-                bull = bear = None
-                decision: dict = {}
-                model = memory = None
-                rounds_done = 0
-                converged = False
-                decision_valid = True
-                async for ev in DebateAgentService.debate_stream(
-                    ticker, user_id, include_news=False, max_rounds=rounds,
-                    risk=state.get("risk"),
-                ):
-                    yield {"type": "debate", "event": ev}
-                    if ev["type"] == "memory":
-                        memory = ev["memory"]
-                    elif ev["type"] in ("opening", "rebuttal"):
-                        bull, bear = ev["bull"], ev["bear"]
-                        rounds_done = ev["round"]
-                        converged = ev.get("converged", False)
-                    elif ev["type"] == "decision":
-                        decision, model = ev["decision"], ev["model"]
-                        decision_valid = ev.get("decision_valid", True)
-                state["debate"] = {
-                    "symbol": ticker, "model": model, "memory": memory,
-                    "bull": bull, "bear": bear, "decision": decision,
-                    "rounds": rounds_done, "converged": converged,
-                    "decision_valid": decision_valid,
-                }
+            async for mode, chunk in graph.astream(
+                None if resuming else state, config, stream_mode=["updates", "custom"],
+            ):
+                # Debate rounds arrive from inside the node via get_stream_writer().
+                if mode == "custom":
+                    if not debate_started:
+                        debate_started = True
+                        yield {"type": "debate_start"}
+                    yield {"type": "debate", "event": chunk}
+                    continue
 
-            rec_update = await recommendation_node(state)
-            state.update(rec_update)
-            rec = rec_update["recommendation"]
-            yield {"type": "recommendation", "recommendation": rec}
+                for node, data in chunk.items():
+                    data = dict(data or {})
+                    errs = data.pop("errors", None)
+                    if errs:
+                        errors.extend(errs)
 
-            # Save the recommendation and a memory entry, same as run().
-            try:
-                await Recommendation(
-                    user_id=user_id,
-                    symbol=ticker,
-                    action=rec.get("action", "HOLD"),
-                    confidence=rec.get("confidence", "LOW"),
-                    rationale=rec.get("rationale"),
-                    explanation=rec.get("explanation", {}),
-                ).insert()
-                await MemoryService.save(
-                    "agent_output",
-                    f"{ticker} recommendation: {rec.get('action')} "
-                    f"({rec.get('confidence')}) — {rec.get('rationale')}",
-                    ticker=ticker,
-                    metadata={"action": rec.get("action"), "confidence": rec.get("confidence")},
-                    user_id=user_id,
-                )
-            except Exception as e:
-                yield {"type": "warn", "message": f"persist failed: {e}"}
+                    if node in _NODE_STATE_KEY:
+                        # A skipped news node returns nothing and is not a failure.
+                        if node == "news" and not include_news:
+                            continue
+                        yield {
+                            "type": "node", "node": node,
+                            "status": "done" if data else "error",
+                            "data": data, "warnings": errs or [],
+                        }
+                        finished.add(node)
+                        # updates only fire on completion, so infer the next stage's start.
+                        if node in GATHER_NODES and GATHER_NODES <= finished:
+                            yield {"type": "node", "node": "recall", "status": "running"}
+                        elif node == "recall":
+                            yield {"type": "node", "node": "research", "status": "running"}
+                    elif node == "gate":
+                        yield {"type": "routing", "consensus": data.get("consensus", {})}
+                    elif node == "quick_decision":
+                        d = data.get("debate") or {}
+                        yield {"type": "quick_decision",
+                               "decision": d.get("decision"), "memory": d.get("memory")}
+                    elif node == "recommendation":
+                        yield {"type": "recommendation",
+                               "recommendation": data.get("recommendation")}
+                    elif node == "persist" and errs:
+                        yield {"type": "warn", "message": "; ".join(errs)}
 
-            yield {"type": "done", "symbol": ticker, "errors": state.get("errors", [])}
+            yield {"type": "done", "symbol": ticker, "errors": errors}
         except Exception as e:
             yield {"type": "error", "message": str(e)}
 
     @staticmethod
     async def history(user_id: str, ticker: str | None = None, limit: int = 20) -> list[Recommendation]:
         # Scoped to the caller: past calls feed the UI's history panel and, via
-        # _recall_memory, future debates — another user's calls belong in neither.
+        # recall_memory, future debates — another user's calls belong in neither.
         q = Recommendation.find(Recommendation.user_id == user_id)
         if ticker:
             q = q.find(Recommendation.symbol == ticker.upper())

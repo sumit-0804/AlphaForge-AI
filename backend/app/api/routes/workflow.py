@@ -17,16 +17,17 @@ async def recommendation_history(
 
 @router.get("/{ticker}/stream")
 async def run_workflow_stream(
-    ticker: str, news: bool = True, rounds: int = 2,
+    ticker: str, news: bool = True, rounds: int = 2, fresh: bool = False,
     user_id: str = Depends(current_user_id),
 ):
     # Streams the whole pipeline live: each node, the routing, the debate, then the recommendation.
+    # ?fresh=true starts a new thread instead of resuming today's checkpoint for this ticker.
     rounds = max(1, min(rounds, 5))
 
     async def event_source():
         try:
             async for ev in WorkflowService.run_stream(
-                ticker.upper(), user_id, include_news=news, rounds=rounds
+                ticker.upper(), user_id, include_news=news, rounds=rounds, fresh=fresh
             ):
                 yield f"data: {json.dumps(ev, default=str)}\n\n"
         except Exception as e:
@@ -44,7 +45,11 @@ async def run_workflow_stream(
 
 @router.get("/{ticker}")
 async def run_workflow(
-    ticker: str, news: bool = True, user_id: str = Depends(current_user_id)
+    ticker: str, news: bool = True, rounds: int = 2, fresh: bool = False,
+    user_id: str = Depends(current_user_id),
 ):
     # Run the full pipeline; ?news=false skips the news node for speed.
-    return await WorkflowService.run(ticker.upper(), user_id, include_news=news)
+    return await WorkflowService.run(
+        ticker.upper(), user_id, include_news=news,
+        rounds=max(1, min(rounds, 5)), fresh=fresh,
+    )
