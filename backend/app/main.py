@@ -8,6 +8,7 @@ from app.api.router import api_router
 from app.core.config import settings
 from app.db.mongo import init_db
 from app.graph.workflow import init_workflow
+from app.services.live_prices import hub as price_hub
 
 # uvicorn adds no root handler, so set one up or our INFO logs get dropped.
 logging.basicConfig(
@@ -32,6 +33,8 @@ async def lifespan(_:FastAPI):
     # Compiled here, not at import: the graph's checkpointer needs a live Mongo client.
     await init_workflow()
     yield
+    # Close the upstream price feed with the app.
+    await price_hub.close()
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
 
