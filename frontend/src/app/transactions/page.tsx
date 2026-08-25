@@ -16,7 +16,7 @@ export default function TransactionsPage() {
   });
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 p-4 sm:p-5 lg:p-6">
       <PageHeader title="Transactions" subtitle={`Times in ${localTimeZoneLabel()}`} />
 
       {isError && <p className="text-xs text-negative">{(error as Error).message}</p>}

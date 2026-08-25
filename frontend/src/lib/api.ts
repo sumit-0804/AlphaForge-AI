@@ -3,7 +3,7 @@ import axios, { AxiosError } from "axios";
 import { authHeader, clearToken, getToken } from "@/lib/auth";
 
 // The FastAPI backend. Everything the UI needs comes through here.
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 const client = axios.create({
   baseURL: `${API_URL}/api`,
@@ -590,8 +590,16 @@ export function streamDebate(
 
 /* ---- STREAMING WORKFLOW (full analysis pipeline) ---- */
 
-// The five data-gathering nodes that run in parallel before the routing gate.
-export type WorkflowNode = "research" | "technical" | "fundamental" | "news" | "risk";
+// Five gathering nodes run in parallel, then recall and research run in sequence
+// on their output before the routing gate.
+export type WorkflowNode =
+  | "profile"
+  | "technical"
+  | "fundamental"
+  | "news"
+  | "risk"
+  | "recall"
+  | "research";
 
 export type Consensus = {
   votes: Record<string, number>;
@@ -600,6 +608,10 @@ export type Consensus = {
   signals: number;
   unanimous: boolean;
   research_dissent: boolean;
+  // A high-volatility or high-beta name never takes the fast path.
+  risk_veto: boolean;
+  // Gathering nodes that failed, which also blocks the fast path.
+  incomplete: string[];
   route: "quick" | "debate";
   action: string | null;
   confidence: string | null;

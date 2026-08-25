@@ -1,29 +1,35 @@
 "use client";
 
-import { useState } from "react";
-import Link from "next/link";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { fetchScan, type ScanCandidate, type TriageEntry, type UniverseKey } from "@/lib/api";
-import { currency, number } from "@/lib/format";
-import { cn } from "@/lib/utils";
-import { useWatchlist } from "@/store/watchlist";
-import { WorkflowStreamView, useWorkflowStream } from "@/components/analysis-stream";
-import { AdvisorPanel } from "@/components/advisor-panel";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  fetchScan,
+  fetchMemoryHealth,
+  type ScanCandidate,
+  type TriageEntry,
+  type UniverseKey,
+} from "@/lib/api";
+import { useWorkflowStream, WorkflowStreamView } from "@/components/analysis-stream";
+import { ScanSidebar } from "@/components/scan-sidebar";
+import { StockDetail } from "@/components/stock-detail";
+import { PriceChart } from "@/components/price-chart";
 import { MarketSessions } from "@/components/market-sessions";
+import { LearningStatusChip } from "@/components/learning-status";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Skeleton } from "@/components/ui/skeleton";
-import { ConfidenceBadge } from "@/components/status-badges";
-import { PageHeader, EmptyState } from "@/components/ui-bits";
 import {
-  StarIcon,
-  ArrowClockwiseIcon,
-  MagnifyingGlassIcon,
-  WarningCircleIcon,
-  BroadcastIcon,
-  ArchiveIcon,
-} from "@phosphor-icons/react";
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { EmptyState } from "@/components/ui-bits";
+import { ArrowClockwiseIcon, CrosshairIcon } from "@phosphor-icons/react";
 
 const UNIVERSES: { key: UniverseKey; label: string }[] = [
   { key: "ALL", label: "All" },
@@ -33,35 +39,41 @@ const UNIVERSES: { key: UniverseKey; label: string }[] = [
   { key: "US", label: "US" },
 ];
 
-// Where the scanned list came from — live movers vs the offline fallback.
-function SourceBadge({ source }: { source?: string }) {
-  if (source === "discovery")
-    return (
-      <span className="inline-flex items-center gap-1 bg-primary/10 px-2 py-0.5 text-[11px] text-primary ring-1 ring-inset ring-primary/25">
-        <BroadcastIcon size={12} /> live movers
-      </span>
-    );
-  if (source === "fallback")
-    return (
-      <span className="inline-flex items-center gap-1 bg-muted px-2 py-0.5 text-[11px] text-muted-foreground ring-1 ring-inset ring-border">
-        <ArchiveIcon size={12} /> fallback list
-      </span>
-    );
-  return null;
-}
+function Workspace() {
+  const params = useSearchParams();
+  const router = useRouter();
+  const qc = useQueryClient();
 
-export default function ScannerPage() {
-  const watchlist = useWatchlist();
-  const [analysing, setAnalysing] = useState<string | null>(null);
+  // The URL owns the selection, so deep links and the back button just work.
+  const selected = (params.get("ticker") ?? "").toUpperCase();
+
   const [market, setMarket] = useState<UniverseKey>("ALL");
-  const { state: analysis, run } = useWorkflowStream();
+  const [search, setSearch] = useState("");
+  const [rounds, setRounds] = useState("2");
+  const [includeNews, setIncludeNews] = useState(false);
+  // Which stock the analysis panel belongs to, so a stale one never shows under another.
+  const [analysed, setAnalysed] = useState<string | null>(null);
+
+  const { state: analysis, run, cancel } = useWorkflowStream();
 
   const scan = useQuery({ queryKey: ["scan", market], queryFn: () => fetchScan(10, true, market) });
+  const memory = useQuery({ queryKey: ["memory-health"], queryFn: fetchMemoryHealth });
 
-  // Deep analysis is the expensive tier — runs only when the user picks a candidate.
-  function analyse(symbol: string) {
-    setAnalysing(symbol);
-    run(symbol, { news: false, rounds: 2 });
+  useEffect(() => {
+    if (analysis.recommendation) {
+      qc.invalidateQueries({ queryKey: ["recommendation-history"] });
+      qc.invalidateQueries({ queryKey: ["memory-health"] });
+    }
+  }, [analysis.recommendation, qc]);
+
+  function select(symbol: string) {
+    const s = symbol.toUpperCase();
+    if (!s || s === selected) return;
+    // Drop the previous stock's analysis rather than leaving it under this one.
+    if (analysis.running) cancel();
+    setAnalysed(null);
+    setSearch("");
+    router.replace(`/scanner?ticker=${s}`);
   }
 
   const triageBySymbol = new Map<string, TriageEntry>(
@@ -75,16 +87,13 @@ export default function ScannerPage() {
     return b.score - a.score;
   });
 
-  return (
-    <div className="space-y-6">
-      <PageHeader title="Scanner" subtitle="Live movers the agent surfaced — you choose which earn a full analysis.">
-        <Button variant="outline" size="sm" onClick={() => scan.refetch()} disabled={scan.isFetching}>
-          <ArrowClockwiseIcon size={14} className={scan.isFetching ? "animate-spin" : ""} />
-          Rescan
-        </Button>
-      </PageHeader>
+  const triage = selected ? triageBySymbol.get(selected) : undefined;
+  const candidate: ScanCandidate | undefined = candidates.find((c) => c.symbol === selected);
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
+  // h-full + min-h-0 throughout so each pane scrolls itself and fills the viewport.
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2">
         <Tabs value={market} onValueChange={(v) => setMarket(v as UniverseKey)}>
           <TabsList>
             {UNIVERSES.map((u) => (
@@ -95,112 +104,147 @@ export default function ScannerPage() {
           </TabsList>
         </Tabs>
         <MarketSessions sessions={scan.data?.sessions} />
+        <LearningStatusChip status={memory.data?.status} />
+        <Button
+          variant="outline"
+          size="sm"
+          className="ml-auto"
+          onClick={() => scan.refetch()}
+          disabled={scan.isFetching}
+        >
+          <ArrowClockwiseIcon size={14} className={scan.isFetching ? "animate-spin" : ""} />
+          Rescan
+        </Button>
       </div>
 
-      {scan.isLoading && (
-        <div className="space-y-2">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-24 w-full" />
-          ))}
-        </div>
-      )}
-      {scan.isError && <p className="text-xs text-negative">{(scan.error as Error).message}</p>}
+      {scan.isError && <p className="px-4 py-2 text-xs text-negative">{(scan.error as Error).message}</p>}
 
-      {scan.data && (
-        <Card className="p-0">
-          <div className="flex flex-wrap items-center gap-2 border-b p-4">
-            <MagnifyingGlassIcon size={15} className="text-muted-foreground" />
-            <span className="text-xs">
-              <strong>{scan.data.matched}</strong> of {scan.data.scanned} scanned
-            </span>
-            <SourceBadge source={scan.data.universe_source} />
-            {scan.data.triage?.valid === false && (
-              <span className="ml-auto flex items-center gap-1 text-[11px] text-amber-600 dark:text-amber-400">
-                <WarningCircleIcon size={13} />
-                Ranked by rule score — agent triage unavailable
-              </span>
-            )}
-          </div>
+      <div className="grid min-h-0 flex-1 lg:grid-cols-[20rem_1fr]">
+        <ScanSidebar
+          scan={scan.data}
+          candidates={candidates}
+          triageBySymbol={triageBySymbol}
+          loading={scan.isLoading}
+          selected={selected}
+          onSelect={select}
+          search={search}
+          onSearchChange={setSearch}
+        />
 
-          {scan.data.triage?.summary && (
-            <p className="border-b bg-muted/30 p-4 text-xs/relaxed text-muted-foreground">{scan.data.triage.summary}</p>
-          )}
-
-          {candidates.length === 0 ? (
-            <EmptyState title="Nothing triggered a setup in this scan." hint="Try a different market or rescan." />
+        <div className="min-w-0 min-h-0 space-y-4 overflow-y-auto p-4">
+          {!selected ? (
+            <div className="grid h-full place-items-center">
+              <EmptyState
+                icon={<CrosshairIcon size={26} />}
+                title="Pick a stock to begin."
+                hint="Choose a mover from the scan, open your watchlist, or search any ticker."
+              />
+            </div>
           ) : (
-            <div className="divide-y">
-              {candidates.map((c: ScanCandidate) => {
-                const t = triageBySymbol.get(c.symbol);
-                return (
-                  <div key={c.symbol} className="p-4">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-base font-semibold">{c.symbol}</span>
-                      {t && <ConfidenceBadge value={t.conviction} />}
-                      <span className="bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                        {c.market === "IN" ? "NSE/BSE" : "NASDAQ/NYSE"}
-                      </span>
-                      <span className="text-[11px] text-muted-foreground">score {c.score}</span>
-                      <button
-                        onClick={() => watchlist.toggle(c.symbol)}
-                        title="Toggle watchlist"
-                        className="text-muted-foreground hover:text-primary"
-                      >
-                        <StarIcon size={17} weight={watchlist.has(c.symbol) ? "fill" : "regular"} />
-                      </button>
-                      <span className="tabular ml-auto text-base font-semibold">{currency(c.price, c.currency)}</span>
-                    </div>
+            <>
+              {/* Keyed so switching stock remounts with a fresh order form. */}
+              <StockDetail key={selected} ticker={selected} />
 
-                    <div className="mt-2 flex flex-wrap gap-1">
-                      {c.signals.map((s) => (
-                        <span key={s} className="bg-positive/8 px-1.5 py-0.5 text-[10px] text-positive ring-1 ring-inset ring-positive/20">
+              {(triage || candidate) && (
+                <Card className="gap-2 p-4">
+                  {candidate && (
+                    <div className="flex flex-wrap gap-1">
+                      {candidate.signals.map((s) => (
+                        <span
+                          key={s}
+                          className="bg-positive/8 px-1.5 py-0.5 text-[10px] text-positive ring-1 ring-inset ring-positive/20"
+                        >
                           {s.replaceAll("_", " ")}
                         </span>
                       ))}
                     </div>
+                  )}
+                  {triage && (
+                    <>
+                      <p className="text-xs/relaxed">{triage.thesis}</p>
+                      {triage.invalidation && (
+                        <p className="text-[11px] text-muted-foreground">
+                          <span className="font-medium">Invalidated if:</span> {triage.invalidation}
+                        </p>
+                      )}
+                    </>
+                  )}
+                </Card>
+              )}
 
-                    <p className="tabular mt-2 text-[11px] text-muted-foreground">
-                      RSI {c.rsi} · EMA20 {c.ema_20} · EMA50 {c.ema_50} · vol {number(c.volume)} ({c.volume_ratio}×)
+              <PriceChart ticker={selected} />
+
+              {/* The expensive tier, directly under the stock it analyses. */}
+              <Card className="gap-3 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-medium">Deep analysis</h3>
+                    <p className="text-[11px] text-muted-foreground">
+                      Full agent pipeline and a Bull/Bear committee for {selected}.
                     </p>
-
-                    {t && (
-                      <>
-                        <p className="mt-2 text-xs/relaxed">{t.thesis}</p>
-                        {t.invalidation && (
-                          <p className="mt-1 text-[11px] text-muted-foreground">
-                            <span className="font-medium">Invalidated if:</span> {t.invalidation}
-                          </p>
-                        )}
-                      </>
-                    )}
-
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <Button size="sm" onClick={() => analyse(c.symbol)} disabled={analysis.running}>
-                        {analysing === c.symbol && analysis.running ? "Analysing…" : "Deep analysis"}
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        nativeButton={false}
-                        render={<Link href={`/market?ticker=${c.symbol}`}>Trade</Link>}
-                      />
-                    </div>
                   </div>
-                );
-              })}
-            </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                      Rounds
+                      <Select value={rounds} onValueChange={(v) => setRounds(v ?? "2")}>
+                        <SelectTrigger size="sm" className="w-16">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {[1, 2, 3, 4, 5].map((n) => (
+                            <SelectItem key={n} value={String(n)}>
+                              {n}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </label>
+                    <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                      <Switch checked={includeNews} onCheckedChange={setIncludeNews} />
+                      News
+                    </label>
+                    <Button
+                      size="sm"
+                      disabled={analysis.running}
+                      onClick={() => {
+                        setAnalysed(selected);
+                        run(selected, { news: includeNews, rounds: Number(rounds) });
+                      }}
+                    >
+                      {analysis.running
+                        ? "Analysing…"
+                        : analysed === selected
+                          ? "Re-run analysis"
+                          : "Run analysis"}
+                    </Button>
+                    {analysed === selected &&
+                      (analysis.running ? (
+                        <Button variant="outline" size="sm" onClick={cancel}>
+                          Stop
+                        </Button>
+                      ) : (
+                        <Button variant="ghost" size="sm" onClick={() => setAnalysed(null)}>
+                          Hide
+                        </Button>
+                      ))}
+                  </div>
+                </div>
+              </Card>
+
+              {analysed === selected && <WorkflowStreamView state={analysis} />}
+            </>
           )}
-        </Card>
-      )}
-
-      {analysing && (
-        <div className="space-y-3">
-          <h2 className={cn("text-sm font-medium")}>Deep analysis · {analysing}</h2>
-          <WorkflowStreamView state={analysis} />
         </div>
-      )}
-
-      <AdvisorPanel />
+      </div>
     </div>
+  );
+}
+
+export default function ScannerPage() {
+  // useSearchParams needs a Suspense boundary.
+  return (
+    <Suspense fallback={<p className="text-xs text-muted-foreground">Loading scanner…</p>}>
+      <Workspace />
+    </Suspense>
   );
 }

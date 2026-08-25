@@ -20,6 +20,8 @@ import {
   BuildingsIcon,
   NewspaperIcon,
   ShieldWarningIcon,
+  IdentificationCardIcon,
+  BrainIcon,
   type Icon,
 } from "@phosphor-icons/react";
 import {
@@ -54,11 +56,13 @@ function initial(includeNews: boolean, ticker: string | null): WorkflowStreamSta
     ticker,
     status: ticker ? "Starting…" : "",
     nodes: {
-      research: "pending",
+      profile: "pending",
       technical: "pending",
       fundamental: "pending",
       news: includeNews ? "pending" : "skipped",
       risk: "pending",
+      recall: "pending",
+      research: "pending",
     },
     routing: null,
     debate: { ...initialDebateState },
@@ -86,9 +90,13 @@ function reduceWf(prev: WorkflowStreamState, ev: WorkflowEvent): WorkflowStreamS
         status:
           ev.consensus.route === "quick"
             ? "Independent signals unanimous — fast path"
-            : ev.consensus.research_dissent
-              ? "Research agent dissents — convening committee"
-              : "Signals conflict — convening committee",
+            : ev.consensus.risk_veto
+              ? "High-risk name — convening committee"
+              : ev.consensus.incomplete?.length
+                ? "Some signals unavailable — convening committee"
+                : ev.consensus.research_dissent
+                  ? "Research agent dissents — convening committee"
+                  : "Signals conflict — convening committee",
       };
     case "quick_decision":
       return { ...prev, debate: { ...prev.debate, memory: ev.memory } };
@@ -150,12 +158,15 @@ export function useWorkflowStream() {
 
 /* ---------- pipeline UI ---------- */
 
+// Gathering nodes first, then the two that read their output.
 const STEPS: { key: WorkflowNode; label: string; icon: Icon }[] = [
-  { key: "research", label: "Research", icon: MagnifyingGlassIcon },
+  { key: "profile", label: "Profile", icon: IdentificationCardIcon },
   { key: "technical", label: "Technical", icon: ChartLineIcon },
   { key: "fundamental", label: "Fundamentals", icon: BuildingsIcon },
   { key: "news", label: "News", icon: NewspaperIcon },
   { key: "risk", label: "Risk", icon: ShieldWarningIcon },
+  { key: "recall", label: "Memory", icon: BrainIcon },
+  { key: "research", label: "Research", icon: MagnifyingGlassIcon },
 ];
 
 function StatusIcon({ status }: { status: NodeStatus }) {
@@ -216,9 +227,13 @@ function Pipeline({ state }: { state: WorkflowStreamState }) {
             title={
               r.route === "quick"
                 ? "Independent signals unanimous and research agrees — committee skipped."
-                : r.research_dissent
-                  ? "Independent signals agreed but the research agent dissents — full committee debate."
-                  : "Signals conflict — full committee debate."
+                : r.risk_veto
+                  ? "High volatility or beta — a risky name always gets the full committee, however aligned the signals."
+                  : r.incomplete?.length
+                    ? `Ran with incomplete data (${r.incomplete.join(", ")}) — full committee debate.`
+                    : r.research_dissent
+                      ? "Independent signals agreed but the research agent dissents — full committee debate."
+                      : "Signals conflict — full committee debate."
             }
           >
             {r.route === "quick" ? "⚡ Fast path" : "⚖️ Committee"}

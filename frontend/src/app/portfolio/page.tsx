@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { StatCard, PageHeader, EmptyState } from "@/components/ui-bits";
 import { TradeDialog } from "@/components/trade-dialog";
 import { DailyReportPanel } from "@/components/daily-report";
+import { AdvisorPanel } from "@/components/advisor-panel";
 
 export default function PortfolioPage() {
   const { data, isLoading, isError, error } = useQuery({
@@ -20,7 +21,7 @@ export default function PortfolioPage() {
   });
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 p-4 sm:p-5 lg:p-6">
       <PageHeader title="Portfolio" subtitle="Your paper-trading book, converted to one base currency." />
 
       {isError && <p className="text-xs text-negative">{(error as Error).message}</p>}
@@ -36,11 +37,23 @@ export default function PortfolioPage() {
       {data && (
         <>
           <div className="grid gap-4 sm:grid-cols-3">
-            <StatCard label={`Total value (${data.base_currency})`} value={currency(data.total_portfolio_value, data.base_currency)} />
-            <StatCard label="Cash" value={currency(data.cash_balance, data.base_currency)} />
+            <StatCard
+              label={`Total value (${data.base_currency})`}
+              value={currency(data.total_portfolio_value, data.base_currency)}
+              numeric={data.total_portfolio_value}
+              format={(n) => currency(n, data.base_currency)}
+            />
+            <StatCard
+              label="Cash"
+              value={currency(data.cash_balance, data.base_currency)}
+              numeric={data.cash_balance}
+              format={(n) => currency(n, data.base_currency)}
+            />
             <StatCard
               label="Total P&L"
               value={currency(data.total_pnl, data.base_currency)}
+              numeric={data.total_pnl}
+              format={(n) => currency(n, data.base_currency)}
               tone={data.total_pnl > 0 ? "positive" : data.total_pnl < 0 ? "negative" : "default"}
             />
           </div>
@@ -58,7 +71,7 @@ export default function PortfolioPage() {
                 title="No open positions."
                 hint={
                   <>
-                    Head to <Link href="/market" className="text-primary hover:underline">Market</Link> to buy.
+                    Head to <Link href="/scanner" className="text-primary hover:underline">Scanner</Link> to buy.
                   </>
                 }
               />
@@ -82,7 +95,7 @@ export default function PortfolioPage() {
                     {data.positions.map((p) => (
                       <TableRow key={p.ticker}>
                         <TableCell className="font-medium">
-                          <Link href={`/market?ticker=${p.ticker}`} className="hover:text-primary hover:underline">
+                          <Link href={`/scanner?ticker=${p.ticker}`} className="hover:text-primary hover:underline">
                             {p.ticker}
                           </Link>
                           <span className="ml-2 text-[11px] text-muted-foreground">{p.currency}</span>
@@ -122,6 +135,9 @@ export default function PortfolioPage() {
           </Card>
         </>
       )}
+
+      {/* Advice about holdings belongs with the holdings, not in the stock workspace. */}
+      <AdvisorPanel />
 
       {/* Outside the `data &&` guard on purpose: an empty book still gets a
           useful report from the scan and allocation halves. */}

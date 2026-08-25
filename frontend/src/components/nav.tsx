@@ -1,106 +1,100 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
+import { fetchMarketSessions } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
-import {
-  GaugeIcon,
-  CrosshairIcon,
-  ChartLineIcon,
-  BrainIcon,
-  BriefcaseIcon,
-  ReceiptIcon,
-  ListIcon,
-  SignOutIcon,
-  type Icon,
-} from "@phosphor-icons/react";
+import { ListIcon, SignOutIcon } from "@phosphor-icons/react";
 import { useAuth } from "@/components/auth-provider";
 
-// The six top-level destinations. Analyze absorbed the old Committee page;
-// Watchlist now lives inside Market.
-const links: { href: string; label: string; icon: Icon }[] = [
-  { href: "/", label: "Dashboard", icon: GaugeIcon },
-  { href: "/scanner", label: "Scanner", icon: CrosshairIcon },
-  { href: "/market", label: "Market", icon: ChartLineIcon },
-  { href: "/analyze", label: "Analyze", icon: BrainIcon },
-  { href: "/portfolio", label: "Portfolio", icon: BriefcaseIcon },
-  { href: "/transactions", label: "Transactions", icon: ReceiptIcon },
+// The four destinations; Scanner absorbed Market and Analyze onto one selected stock.
+const links: { href: string; label: string }[] = [
+  { href: "/", label: "Dashboard" },
+  { href: "/scanner", label: "Scanner" },
+  { href: "/portfolio", label: "Portfolio" },
+  { href: "/transactions", label: "Transactions" },
 ];
+
+function isActive(href: string, pathname: string) {
+  return href === "/" ? pathname === "/" : pathname.startsWith(href);
+}
 
 function Brand() {
   return (
-    <Link href="/" className="flex items-center gap-2.5 px-2">
-      <span className="grid size-7 place-items-center bg-primary text-primary-foreground">
-        <span className="text-sm font-bold">α</span>
-      </span>
-      <span className="flex flex-col leading-none">
-        <span className="text-sm font-semibold tracking-tight">AlphaForge</span>
-        <span className="text-[10px] text-muted-foreground">paper trading</span>
-      </span>
+    <Link
+      href="/"
+      className="grad-text flex h-full items-center px-3 font-semibold tracking-[0.16em]"
+    >
+      ALPHAFORGE
     </Link>
   );
 }
 
-function NavLinks({ pathname, onNavigate }: { pathname: string; onNavigate?: () => void }) {
+/** Which markets are trading, as a single strip cell. */
+function SessionCell() {
+  const { data } = useQuery({
+    queryKey: ["market-sessions"],
+    queryFn: fetchMarketSessions,
+    refetchInterval: 60_000,
+  });
+  const open = Object.values(data ?? {}).filter((m) => m.is_open);
+  if (!data) return null;
+
   return (
-    <nav className="flex flex-col gap-0.5">
-      {links.map(({ href, label, icon: Icon }) => {
-        const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
-        return (
-          <Link
-            key={href}
-            href={href}
-            onClick={onNavigate}
-            aria-current={active ? "page" : undefined}
-            className={cn(
-              "group flex items-center gap-3 px-3 py-2 text-sm transition-colors",
-              active
-                ? "bg-accent text-accent-foreground"
-                : "text-muted-foreground hover:bg-muted hover:text-foreground"
-            )}
-          >
-            {/* A thin accent bar marks the active route. */}
-            <span
-              className={cn(
-                "h-4 w-0.5 shrink-0 transition-colors",
-                active ? "bg-primary" : "bg-transparent"
-              )}
-            />
-            <Icon size={17} weight={active ? "fill" : "regular"} />
-            {label}
-          </Link>
-        );
-      })}
-    </nav>
+    <span className="flex h-full items-center gap-1.5 border-l px-3">
+      <span
+        className={cn(
+          "inline-block size-1.5",
+          open.length ? "bg-positive" : "bg-muted-foreground"
+        )}
+      />
+      <span className={open.length ? "text-positive" : "text-muted-foreground"}>
+        {open.length ? `${open.map((m) => m.label).join(" · ")} OPEN` : "MARKETS CLOSED"}
+      </span>
+    </span>
   );
 }
 
-// Who's signed in, and the way out. Sits at the foot of the sidebar so the
-// disclaimer stays the last thing on the page.
-function AccountFooter() {
+/** A ticking clock — mounted-only, so the server and client never disagree. */
+function ClockCell() {
+  const [now, setNow] = useState<string | null>(null);
+  useEffect(() => {
+    const tick = () =>
+      setNow(new Date().toLocaleTimeString("en-GB", { hour12: false }));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, []);
+  if (!now) return null;
+  return (
+    <span className="tabular hidden h-full items-center border-l px-3 text-muted-foreground sm:flex">
+      {now}
+    </span>
+  );
+}
+
+function AccountCell() {
   const { user, signOut } = useAuth();
   if (!user) return null;
-
   return (
-    <div className="flex items-center justify-between gap-2 border-t px-3 py-2">
-      {/* The email can be long; truncate rather than widen the sidebar. */}
-      <span className="min-w-0 truncate text-[11px] text-muted-foreground" title={user.email}>
+    <>
+      <span
+        className="hidden h-full max-w-40 items-center truncate border-l px-3 text-muted-foreground lg:flex"
+        title={user.email}
+      >
         {user.email}
       </span>
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        onClick={signOut}
-        aria-label="Sign out"
-        title="Sign out"
-      >
-        <SignOutIcon size={14} />
-      </Button>
-    </div>
+      <span className="flex h-full items-center border-l px-1.5">
+        <Button variant="ghost" size="icon-xs" onClick={signOut} aria-label="Sign out" title="Sign out">
+          <SignOutIcon size={13} />
+        </Button>
+      </span>
+    </>
   );
 }
 
@@ -109,46 +103,71 @@ export function Nav() {
   const [open, setOpen] = useState(false);
 
   return (
-    <>
-      {/* Desktop sidebar */}
-      <aside className="hidden w-56 shrink-0 flex-col border-r bg-sidebar md:flex">
-        <div className="flex h-14 items-center justify-between border-b px-2">
-          <Brand />
-          <ThemeToggle />
-        </div>
-        <div className="flex-1 overflow-y-auto p-3">
-          <NavLinks pathname={pathname} />
-        </div>
-        <AccountFooter />
-        <div className="border-t px-4 py-3 text-[10px] text-muted-foreground">
-          Educational analysis — not financial advice.
-        </div>
-      </aside>
-
-      {/* Mobile top bar + slide-out sheet */}
-      <div className="sticky top-0 z-30 flex h-14 items-center justify-between border-b bg-sidebar px-3 md:hidden">
+    <header className="sticky top-0 z-30 flex h-8 shrink-0 items-stretch border-b bg-sidebar text-[11px] tracking-wide uppercase">
+      {/* Narrow screens get the same routes behind a sheet. */}
+      <span className="flex items-center px-1.5 md:hidden">
         <Sheet open={open} onOpenChange={setOpen}>
           <SheetTrigger
             render={
-              <Button variant="ghost" size="icon-sm" aria-label="Open menu">
-                <ListIcon size={18} />
+              <Button variant="ghost" size="icon-xs" aria-label="Open menu">
+                <ListIcon size={14} />
               </Button>
             }
           />
-          <SheetContent side="left" className="w-64 p-0">
+          <SheetContent side="left" className="w-60 p-0">
             <SheetTitle className="sr-only">Menu</SheetTitle>
-            <div className="flex h-14 items-center border-b px-4">
-              <Brand />
-            </div>
-            <div className="p-3">
-              <NavLinks pathname={pathname} onNavigate={() => setOpen(false)} />
-            </div>
-            <AccountFooter />
+            <nav className="flex flex-col pt-2 text-xs uppercase">
+              {links.map(({ href, label }) => (
+                <Link
+                  key={href}
+                  href={href}
+                  onClick={() => setOpen(false)}
+                  className={cn(
+                    "px-4 py-2.5",
+                    isActive(href, pathname)
+                      ? "bg-accent text-primary"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  {label}
+                </Link>
+              ))}
+            </nav>
           </SheetContent>
         </Sheet>
-        <Brand />
-        <ThemeToggle />
-      </div>
-    </>
+      </span>
+
+      <Brand />
+
+      <nav className="hidden items-stretch md:flex">
+        {links.map(({ href, label }) => {
+          const active = isActive(href, pathname);
+          return (
+            <Link
+              key={href}
+              href={href}
+              aria-current={active ? "page" : undefined}
+              className={cn(
+                "relative flex items-center border-l px-3 transition-colors",
+                active
+                  ? "bg-accent text-accent-foreground after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-[image:var(--grad-primary)] after:content-['']"
+                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
+              )}
+            >
+              {label}
+            </Link>
+          );
+        })}
+      </nav>
+
+      <span className="ml-auto flex items-stretch">
+        <SessionCell />
+        <ClockCell />
+        <AccountCell />
+        <span className="flex h-full items-center border-l px-1.5">
+          <ThemeToggle />
+        </span>
+      </span>
+    </header>
   );
 }

@@ -58,12 +58,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   if (onLogin) return <>{children}</>;
 
+  // Viewport-fixed with only main scrolling, so panels tile rather than float.
   return (
-    <div className="flex min-h-screen flex-col md:flex-row">
+    <div className="flex h-screen flex-col overflow-hidden">
       <Nav />
-      <main className="flex-1 overflow-x-hidden p-4 sm:p-6 lg:p-8">
-        <div className="mx-auto w-full max-w-6xl">{children}</div>
-      </main>
+      {/* No padding or max width here: pages go edge to edge and pad themselves. */}
+      <main className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">{children}</main>
+      <footer className="flex h-6 shrink-0 items-center border-t bg-sidebar px-3 text-[10px] tracking-wide text-muted-foreground uppercase">
+        Educational analysis — not financial advice
+      </footer>
     </div>
   );
 }
