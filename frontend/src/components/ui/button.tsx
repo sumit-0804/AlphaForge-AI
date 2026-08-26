@@ -8,7 +8,9 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground hover:bg-primary/80",
+        // Gradient rather than a flat fill; brightness on hover keeps the blend intact.
+        default:
+          "grad-primary text-primary-foreground shadow-[0_0_14px_-6px_var(--primary)] hover:brightness-115",
         outline:
           "border-border bg-background hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50",
         secondary:

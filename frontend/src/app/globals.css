@@ -57,100 +57,245 @@
   --radius-2xl: calc(var(--radius) * 1.8);
 }
 
-/* Light theme — warm off-white surfaces, deep teal accent. */
+/* Light theme — the same ultraviolet identity on paper. Violet is darkened until
+   it holds contrast; the ambient pools are lifted rather than removed. */
 :root {
   --radius: 0.375rem;
 
-  --background: oklch(0.985 0.002 250);
-  --foreground: oklch(0.205 0.01 260);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.205 0.01 260);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.205 0.01 260);
+  --background: oklch(0.975 0.006 300);
+  --foreground: oklch(0.225 0.022 296);
+  --card: oklch(0.995 0.003 300);
+  --card-foreground: oklch(0.225 0.022 296);
+  --popover: oklch(0.995 0.003 300);
+  --popover-foreground: oklch(0.225 0.022 296);
 
-  /* Teal-cyan phosphor accent — distinct from the green/red used for P&L. */
-  --primary: oklch(0.58 0.1 210);
-  --primary-foreground: oklch(0.99 0.005 220);
-  --secondary: oklch(0.96 0.004 250);
-  --secondary-foreground: oklch(0.28 0.01 260);
-  --muted: oklch(0.965 0.004 250);
-  --muted-foreground: oklch(0.5 0.012 260);
-  --accent: oklch(0.95 0.012 210);
-  --accent-foreground: oklch(0.3 0.03 220);
+  /* Violet darkened until it holds contrast on paper. */
+  --primary: oklch(0.472 0.222 293);
+  --primary-foreground: oklch(0.99 0.004 300);
+  --secondary: oklch(0.945 0.011 300);
+  --secondary-foreground: oklch(0.3 0.03 296);
+  --muted: oklch(0.945 0.011 300);
+  --muted-foreground: oklch(0.5 0.034 292);
+  --accent: oklch(0.928 0.03 297);
+  --accent-foreground: oklch(0.4 0.19 293);
 
-  --positive: oklch(0.57 0.14 155);
-  --negative: oklch(0.55 0.2 27);
-  --destructive: oklch(0.577 0.245 27.325);
+  --positive: oklch(0.545 0.14 132);
+  --negative: oklch(0.512 0.198 20);
+  --destructive: oklch(0.512 0.198 20);
 
-  --border: oklch(0.9 0.005 260);
-  --input: oklch(0.9 0.005 260);
-  --ring: oklch(0.58 0.1 210);
+  --border: oklch(0.885 0.014 297);
+  --input: oklch(0.885 0.014 297);
+  --ring: oklch(0.472 0.222 293);
 
-  --chart-1: oklch(0.58 0.1 210);
-  --chart-2: oklch(0.57 0.14 155);
-  --chart-3: oklch(0.65 0.16 50);
-  --chart-4: oklch(0.55 0.2 27);
-  --chart-5: oklch(0.52 0.13 290);
+  --chart-1: oklch(0.472 0.222 293);
+  --chart-2: oklch(0.545 0.14 132);
+  --chart-3: oklch(0.5 0.2 322);
+  --chart-4: oklch(0.512 0.198 20);
+  --chart-5: oklch(0.44 0.15 268);
 
-  --sidebar: oklch(0.99 0.002 250);
-  --sidebar-foreground: oklch(0.205 0.01 260);
-  --sidebar-primary: oklch(0.58 0.1 210);
-  --sidebar-primary-foreground: oklch(0.99 0.005 220);
-  --sidebar-accent: oklch(0.95 0.012 210);
-  --sidebar-accent-foreground: oklch(0.3 0.03 220);
-  --sidebar-border: oklch(0.9 0.005 260);
-  --sidebar-ring: oklch(0.58 0.1 210);
+  --sidebar: oklch(0.958 0.008 300);
+  --sidebar-foreground: oklch(0.225 0.022 296);
+  --sidebar-primary: oklch(0.472 0.222 293);
+  --sidebar-primary-foreground: oklch(0.99 0.004 300);
+  --sidebar-accent: oklch(0.928 0.03 297);
+  --sidebar-accent-foreground: oklch(0.4 0.19 293);
+  --sidebar-border: oklch(0.885 0.014 297);
+  --sidebar-ring: oklch(0.472 0.222 293);
+
+  --grad-primary: linear-gradient(
+    135deg,
+    oklch(0.38 0.19 288) 0%,
+    oklch(0.472 0.222 293) 52%,
+    oklch(0.46 0.2 322) 100%
+  );
+  --grad-secondary: linear-gradient(
+    135deg,
+    oklch(0.44 0.2 296) 0%,
+    oklch(0.34 0.15 276) 55%,
+    oklch(0.42 0.12 268) 100%
+  );
+  --grad-positive: linear-gradient(
+    120deg,
+    oklch(0.46 0.19 292) 0%,
+    oklch(0.545 0.14 132) 100%
+  );
+  --grad-negative: linear-gradient(
+    120deg,
+    oklch(0.36 0.13 8) 0%,
+    oklch(0.512 0.198 20) 100%
+  );
+  --grad-surface: linear-gradient(
+    160deg,
+    oklch(0.978 0.012 300) 0%,
+    oklch(0.995 0.003 300) 48%,
+    oklch(0.995 0.003 300) 100%
+  );
+  --grad-border: linear-gradient(
+    135deg,
+    oklch(0.6 0.16 293 / 0.35) 0%,
+    oklch(0.55 0.1 275 / 0.14) 45%,
+    oklch(0.58 0.14 322 / 0.28) 100%
+  );
+  --beam-from: oklch(0.472 0.222 293);
+  --beam-to: oklch(0.5 0.2 322);
 }
 
-/* Dark theme — near-black cool surfaces, bright phosphor accent. The primary experience. */
+/* Dark theme — the ultraviolet terminal. Near-black plum surfaces, violet that
+   travels through indigo and magenta in gradients only. The primary experience. */
 .dark {
-  --background: oklch(0.17 0.006 260);
-  --foreground: oklch(0.96 0.003 250);
-  --card: oklch(0.205 0.007 260);
-  --card-foreground: oklch(0.96 0.003 250);
-  --popover: oklch(0.22 0.008 260);
-  --popover-foreground: oklch(0.96 0.003 250);
+  /* Surfaces: near-black carrying a plum cast, never a saturated purple. */
+  --background: oklch(0.132 0.014 300);
+  --foreground: oklch(0.952 0.012 85);
+  --card: oklch(0.168 0.019 297);
+  --card-foreground: oklch(0.952 0.012 85);
+  --popover: oklch(0.185 0.024 298);
+  --popover-foreground: oklch(0.952 0.012 85);
 
-  --primary: oklch(0.74 0.12 200);
-  --primary-foreground: oklch(0.17 0.02 220);
-  --secondary: oklch(0.26 0.008 260);
-  --secondary-foreground: oklch(0.96 0.003 250);
-  --muted: oklch(0.25 0.008 260);
-  --muted-foreground: oklch(0.68 0.012 260);
-  --accent: oklch(0.3 0.02 210);
-  --accent-foreground: oklch(0.92 0.02 200);
+  /* The solid token is the midpoint of --grad-primary, so anything that cannot
+     take a gradient still reads as the same colour. */
+  --primary: oklch(0.62 0.246 295);
+  --primary-foreground: oklch(0.982 0.008 300);
+  --secondary: oklch(0.238 0.032 296);
+  --secondary-foreground: oklch(0.952 0.012 85);
+  --muted: oklch(0.215 0.028 297);
+  --muted-foreground: oklch(0.665 0.032 290);
+  --accent: oklch(0.245 0.052 297);
+  --accent-foreground: oklch(0.86 0.13 296);
 
-  --positive: oklch(0.74 0.16 158);
-  --negative: oklch(0.68 0.19 25);
-  --destructive: oklch(0.7 0.19 22);
+  /* Restrained lime rather than a signal green, and crimson off a burgundy base. */
+  --positive: oklch(0.822 0.152 128);
+  --negative: oklch(0.618 0.212 19);
+  --destructive: oklch(0.618 0.212 19);
 
-  --border: oklch(1 0 0 / 9%);
-  --input: oklch(1 0 0 / 12%);
-  --ring: oklch(0.74 0.12 200);
+  --border: oklch(0.298 0.034 293);
+  --input: oklch(0.298 0.034 293);
+  --ring: oklch(0.62 0.246 295);
 
-  --chart-1: oklch(0.74 0.12 200);
-  --chart-2: oklch(0.74 0.16 158);
-  --chart-3: oklch(0.72 0.16 55);
-  --chart-4: oklch(0.68 0.19 25);
-  --chart-5: oklch(0.66 0.14 290);
+  --chart-1: oklch(0.62 0.246 295);
+  --chart-2: oklch(0.822 0.152 128);
+  --chart-3: oklch(0.60 0.22 322);
+  --chart-4: oklch(0.618 0.212 19);
+  --chart-5: oklch(0.52 0.16 268);
 
-  --sidebar: oklch(0.185 0.006 260);
-  --sidebar-foreground: oklch(0.96 0.003 250);
-  --sidebar-primary: oklch(0.74 0.12 200);
-  --sidebar-primary-foreground: oklch(0.17 0.02 220);
-  --sidebar-accent: oklch(0.3 0.02 210);
-  --sidebar-accent-foreground: oklch(0.92 0.02 200);
-  --sidebar-border: oklch(1 0 0 / 9%);
-  --sidebar-ring: oklch(0.74 0.12 200);
+  --sidebar: oklch(0.152 0.018 298);
+  --sidebar-foreground: oklch(0.952 0.012 85);
+  --sidebar-primary: oklch(0.62 0.246 295);
+  --sidebar-primary-foreground: oklch(0.982 0.008 300);
+  --sidebar-accent: oklch(0.245 0.052 297);
+  --sidebar-accent-foreground: oklch(0.86 0.13 296);
+  --sidebar-border: oklch(0.298 0.034 293);
+  --sidebar-ring: oklch(0.62 0.246 295);
+
+  /* --- gradients ---------------------------------------------------------
+     The restricted hues (magenta, indigo, cyan, lime) only ever appear as
+     transitional stops in here — never as a standalone token above. */
+  --grad-primary: linear-gradient(
+    135deg,
+    oklch(0.44 0.2 288) 0%,
+    oklch(0.62 0.246 295) 52%,
+    oklch(0.585 0.212 322) 100%
+  );
+  --grad-secondary: linear-gradient(
+    135deg,
+    oklch(0.5 0.222 296) 0%,
+    oklch(0.375 0.162 276) 55%,
+    oklch(0.462 0.128 268) 100%
+  );
+  --grad-positive: linear-gradient(
+    120deg,
+    oklch(0.56 0.2 292) 0%,
+    oklch(0.822 0.152 128) 100%
+  );
+  --grad-negative: linear-gradient(
+    120deg,
+    oklch(0.352 0.128 8) 0%,
+    oklch(0.618 0.212 19) 100%
+  );
+  /* Card wash: a purple lift at the top edge that fades out before mid-card. */
+  --grad-surface: linear-gradient(
+    160deg,
+    oklch(0.206 0.032 300) 0%,
+    oklch(0.168 0.019 297) 46%,
+    oklch(0.158 0.016 295) 100%
+  );
+  /* Hairline neon edge, drawn through a mask so it stays 1px. */
+  --grad-border: linear-gradient(
+    135deg,
+    oklch(0.55 0.19 293 / 0.55) 0%,
+    oklch(0.42 0.12 275 / 0.22) 45%,
+    oklch(0.52 0.16 322 / 0.4) 100%
+  );
+  --beam-from: oklch(0.72 0.24 295);
+  --beam-to: oklch(0.66 0.22 322);
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
+
+  /* Square, hairline scrollbars in the theme's own colours — the default chrome
+     bar is the one piece of light UI that survives a dark terminal. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border);
+    /* Inset by the track colour so the thumb reads as a bar, not a fill. */
+    border: 2px solid var(--background);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--muted-foreground);
+  }
+  ::-webkit-scrollbar-thumb:active {
+    background: var(--primary);
+  }
   body {
     @apply bg-background text-foreground;
-    font-feature-settings: "cv11", "ss01";
+    /* IBM Plex Mono's zero is already slashed; no stylistic sets to opt into. */
+  }
+
+  /* Ambient lighting: three wide, low-opacity pools behind everything, fixed so
+     they light the frame rather than scrolling with content. Cyan and indigo live
+     only in here — never as a token — which is what keeps the UI reading violet. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background:
+      /* A faint survey grid over the pools — terminal texture, not decoration. */
+      repeating-linear-gradient(
+        to right,
+        oklch(0.62 0.246 295 / 0.05) 0 1px,
+        transparent 1px 68px
+      ),
+      repeating-linear-gradient(
+        to bottom,
+        oklch(0.62 0.246 295 / 0.05) 0 1px,
+        transparent 1px 68px
+      ),
+      radial-gradient(70rem 45rem at 10% -12%, oklch(0.42 0.14 296 / 0.3), transparent 62%),
+      radial-gradient(52rem 34rem at 96% 4%, oklch(0.4 0.1 248 / 0.16), transparent 64%),
+      radial-gradient(60rem 40rem at 46% 112%, oklch(0.38 0.12 326 / 0.16), transparent 66%);
+    /* Fade the grid out toward the edges so it never reads as a hard overlay. */
+    mask-image: radial-gradient(120% 100% at 50% 30%, #000 40%, transparent 100%);
+  }
+  :root:not(.dark) body::before {
+    background:
+      radial-gradient(70rem 45rem at 10% -12%, oklch(0.72 0.09 296 / 0.22), transparent 62%),
+      radial-gradient(52rem 34rem at 96% 4%, oklch(0.75 0.07 248 / 0.14), transparent 64%),
+      radial-gradient(60rem 40rem at 46% 112%, oklch(0.74 0.08 326 / 0.12), transparent 66%);
   }
   html {
     @apply font-mono;
@@ -168,5 +313,123 @@
       animation-iteration-count: 1 !important;
       transition-duration: 0.01ms !important;
     }
+  }
+}
+
+/* Gradient surfaces. Kept as named utilities rather than inline arbitrary values
+   so the palette stays defined in one place. */
+@layer components {
+  /* Filled gradient — buttons, active nav, badges. */
+  .grad-primary {
+    background-image: var(--grad-primary);
+  }
+  .grad-secondary {
+    background-image: var(--grad-secondary);
+  }
+
+  /* Gradient lettering, for key metrics only. */
+  .grad-text {
+    background-image: var(--grad-primary);
+    background-clip: text;
+    color: transparent;
+  }
+  .grad-text-positive {
+    background-image: var(--grad-positive);
+    background-clip: text;
+    color: transparent;
+  }
+  .grad-text-negative {
+    background-image: var(--grad-negative);
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* A card wash: purple lift at the top edge, gone by mid-card. */
+  .grad-surface {
+    background-image: var(--grad-surface);
+  }
+
+  /* A true 1px neon edge — the gradient is masked to the border box so it cannot
+     bleed into the fill. Sits above content-free space only. */
+  .neon-edge {
+    position: relative;
+    isolation: isolate;
+  }
+  .neon-edge::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    padding: 1px;
+    pointer-events: none;
+    background-image: var(--grad-border);
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    mask-composite: exclude;
+  }
+
+  /* Restrained bloom for a focused or live element. */
+  .neon-glow {
+    box-shadow:
+      0 0 0 1px oklch(0.62 0.246 295 / 0.25),
+      0 0 18px -6px oklch(0.62 0.246 295 / 0.45);
+  }
+}
+
+/* A travelling light along a card's hairline edge — the Magic UI "border beam"
+   idea, rebuilt on the existing masked border so it costs no new dependency.
+   Reserved for genuinely live surfaces; the reduced-motion rule above stops it. */
+@layer components {
+  .neon-beam::after {
+    background-image: linear-gradient(
+      90deg,
+      transparent 0%,
+      transparent 34%,
+      oklch(0.72 0.24 295 / 0.85) 50%,
+      oklch(0.68 0.2 322 / 0.5) 58%,
+      transparent 70%,
+      transparent 100%
+    );
+    background-size: 260% 100%;
+    animation: beam-sweep 4s linear infinite;
+  }
+
+  /* A price that just moved: one soft pulse in its direction, then gone. */
+  .tick-up {
+    animation: tick-up 0.6s ease-out;
+  }
+  .tick-down {
+    animation: tick-down 0.6s ease-out;
+  }
+}
+
+@keyframes beam-sweep {
+  from {
+    background-position: 210% 0;
+  }
+  to {
+    background-position: -110% 0;
+  }
+}
+
+@keyframes tick-up {
+  0% {
+    background-color: oklch(0.822 0.152 128 / 0.28);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+@keyframes tick-down {
+  0% {
+    background-color: oklch(0.618 0.212 19 / 0.28);
+  }
+  100% {
+    background-color: transparent;
   }
 }
