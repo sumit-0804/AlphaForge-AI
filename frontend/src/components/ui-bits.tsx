@@ -1,24 +1,48 @@
+"use client";
+
 import { cn } from "@/lib/utils";
 import { Card } from "@/components/ui/card";
+import { NumberTicker } from "@/components/ui/number-ticker";
 
 // A labelled number tile for the dashboards. `tone` colours the value.
 export function StatCard({
   label,
   value,
+  numeric,
+  format,
   sub,
   tone,
 }: {
   label: string;
   value: string;
+  /** Pass the raw number to count the tile up on mount; `value` stays the fallback. */
+  numeric?: number | null;
+  format?: (n: number) => string;
   sub?: string;
   tone?: "default" | "positive" | "negative";
 }) {
+  // Key metrics are one of the few places a gradient is allowed to carry text.
   const valueTone =
-    tone === "positive" ? "text-positive" : tone === "negative" ? "text-negative" : "";
+    tone === "positive"
+      ? "grad-text-positive"
+      : tone === "negative"
+        ? "grad-text-negative"
+        : "grad-text";
   return (
     <Card className="gap-1.5 p-4">
       <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className={cn("tabular text-2xl font-semibold leading-none", valueTone)}>{value}</p>
+      <p className={cn("tabular text-2xl font-semibold leading-none", valueTone)}>
+        {numeric != null ? (
+          <NumberTicker
+            value={numeric}
+            decimalPlaces={2}
+            format={format}
+            className="leading-none"
+          />
+        ) : (
+          value
+        )}
+      </p>
       {sub && <p className="text-[11px] text-muted-foreground">{sub}</p>}
     </Card>
   );

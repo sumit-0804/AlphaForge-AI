@@ -7,6 +7,7 @@ import { fetchPortfolio, fetchHealth, fetchRecommendationHistory } from "@/lib/a
 import { currency, percent, pnlClass, dateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Card } from "@/components/ui/card";
+import { MagicCard } from "@/components/ui/magic-card";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -24,13 +25,24 @@ function QuickActions() {
     <div className="grid gap-4 sm:grid-cols-2">
       {actions.map((a) => (
         <Link key={a.href} href={a.href}>
-          <Card className="group gap-1 p-4 transition-colors hover:bg-accent/40">
-            <div className="flex items-center gap-2">
-              <a.icon size={18} className="text-primary" />
-              <p className="text-sm font-medium">{a.label}</p>
-              <ArrowRightIcon size={14} className="ml-auto text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-            </div>
-            <p className="text-[11px] text-muted-foreground">{a.hint}</p>
+          <Card className="group gap-0 p-0">
+            {/* Spotlight stops customised off Magic UI's violet/pink to our
+                electric-violet → magenta-violet pair. */}
+            <MagicCard
+              gradientFrom="#b47aff"
+              gradientTo="#cd57e0"
+              gradientColor="#1a1424"
+              gradientOpacity={0.55}
+              gradientSize={220}
+              className="p-4"
+            >
+              <div className="flex items-center gap-2">
+                <a.icon size={18} className="text-primary" />
+                <p className="text-sm font-medium">{a.label}</p>
+                <ArrowRightIcon size={14} className="ml-auto text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+              </div>
+              <p className="mt-1 text-[11px] text-muted-foreground">{a.hint}</p>
+            </MagicCard>
           </Card>
         </Link>
       ))}
@@ -138,14 +150,20 @@ export default function DashboardPage() {
             <StatCard
               label={`Total value (${p.base_currency})`}
               value={currency(p.total_portfolio_value, p.base_currency)}
+              numeric={p.total_portfolio_value}
+              format={(n) => currency(n, p.base_currency)}
             />
             <StatCard
               label="Cash balance"
               value={currency(p.cash_balance, p.base_currency)}
+              numeric={p.cash_balance}
+              format={(n) => currency(n, p.base_currency)}
             />
             <StatCard
               label="Total P&L"
               value={currency(p.total_pnl, p.base_currency)}
+              numeric={p.total_pnl}
+              format={(n) => currency(n, p.base_currency)}
               tone={p.total_pnl > 0 ? "positive" : p.total_pnl < 0 ? "negative" : "default"}
             />
             <StatCard label="Positions" value={String(p.positions.length)} />
