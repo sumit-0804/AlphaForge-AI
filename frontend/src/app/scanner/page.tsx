@@ -50,7 +50,8 @@ function Workspace() {
   const [market, setMarket] = useState<UniverseKey>("ALL");
   const [search, setSearch] = useState("");
   const [rounds, setRounds] = useState("2");
-  const [includeNews, setIncludeNews] = useState(false);
+  // On by default: news sentiment is one of the votes the routing gate counts.
+  const [includeNews, setIncludeNews] = useState(true);
   // Which stock the analysis panel belongs to, so a stale one never shows under another.
   const [analysed, setAnalysed] = useState<string | null>(null);
 

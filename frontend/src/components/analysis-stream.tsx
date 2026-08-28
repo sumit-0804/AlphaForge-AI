@@ -136,7 +136,7 @@ export function useWorkflowStream() {
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
-    setState(initial(opts.news ?? false, ticker.toUpperCase()));
+    setState(initial(opts.news ?? true, ticker.toUpperCase()));
 
     streamWorkflow(ticker, opts, (ev) => setState((prev) => reduceWf(prev, ev)), ac.signal)
       .then(() => setState((prev) => ({ ...prev, running: false })))

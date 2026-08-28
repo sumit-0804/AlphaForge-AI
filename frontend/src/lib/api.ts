@@ -582,7 +582,7 @@ export function streamDebate(
   signal?: AbortSignal
 ): Promise<void> {
   const params = new URLSearchParams({
-    news: String(opts.news ?? false),
+    news: String(opts.news ?? true),
     rounds: String(opts.rounds ?? 2),
   });
   return consumeSSE<DebateEvent>(`/debate/${ticker.toUpperCase()}/stream?${params}`, onEvent, signal);
@@ -644,7 +644,7 @@ export function streamWorkflow(
   signal?: AbortSignal
 ): Promise<void> {
   const params = new URLSearchParams({
-    news: String(opts.news ?? false),
+    news: String(opts.news ?? true),
     rounds: String(opts.rounds ?? 2),
   });
   return consumeSSE<WorkflowEvent>(`/workflow/${ticker.toUpperCase()}/stream?${params}`, onEvent, signal);
