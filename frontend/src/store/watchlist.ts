@@ -3,28 +3,27 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-// A simple starred-ticker list, saved to localStorage so it survives reloads.
 type WatchlistState = {
-  tickers: string[];
-  add: (ticker: string) => void;
-  remove: (ticker: string) => void;
-  toggle: (ticker: string) => void;
-  has: (ticker: string) => boolean;
+  symbols: string[];
+  toggle: (symbol: string) => void;
+  remove: (symbol: string) => void;
+  has: (symbol: string) => boolean;
 };
 
+// Newest first, so the last thing you looked at is the first chip on the home screen.
 export const useWatchlist = create<WatchlistState>()(
   persist(
     (set, get) => ({
-      tickers: ["AAPL", "MSFT", "NVDA"],
-      add: (t) => {
-        const ticker = t.trim().toUpperCase();
-        if (!ticker || get().tickers.includes(ticker)) return;
-        set({ tickers: [...get().tickers, ticker] });
-      },
-      remove: (t) => set({ tickers: get().tickers.filter((x) => x !== t.toUpperCase()) }),
-      toggle: (t) => (get().has(t) ? get().remove(t) : get().add(t)),
-      has: (t) => get().tickers.includes(t.toUpperCase()),
+      symbols: [],
+      toggle: (symbol) =>
+        set((s) => ({
+          symbols: s.symbols.includes(symbol)
+            ? s.symbols.filter((x) => x !== symbol)
+            : [symbol, ...s.symbols].slice(0, 24),
+        })),
+      remove: (symbol) => set((s) => ({ symbols: s.symbols.filter((x) => x !== symbol) })),
+      has: (symbol) => get().symbols.includes(symbol),
     }),
-    { name: "alphaforge-watchlist" }
+    { name: "alphaforge.watchlist" }
   )
 );

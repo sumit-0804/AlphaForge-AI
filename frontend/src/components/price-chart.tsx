@@ -1,91 +1,69 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useTheme } from "next-themes";
-import { useQuery } from "@tanstack/react-query";
 import {
-  createChart,
   CandlestickSeries,
   ColorType,
+  createChart,
+  type CandlestickData,
   type IChartApi,
   type ISeriesApi,
-  type CandlestickData,
 } from "lightweight-charts";
-import { fetchHistory, type Candle } from "@/lib/api";
-import { useLivePrice, type Tick } from "@/lib/live";
-import { cn } from "@/lib/utils";
-import { Card } from "@/components/ui/card";
-import { BorderBeam } from "@/components/ui/border-beam";
+
 import { Skeleton } from "@/components/ui/skeleton";
+import { useHistory } from "@/lib/queries";
+import type { Tick } from "@/lib/live";
+import { cn } from "@/lib/utils";
 
-// lightweight-charts throws on oklch(), so mirror the tokens as hex per theme.
-const PALETTE = {
-  dark: {
-    // Soft lime and crimson, matching --positive / --negative exactly.
-    up: "#a8d765",
-    down: "#e93750",
-    // A violet-tinted grid so it sits in the plum ground rather than on it.
-    grid: "rgba(150,85,255,0.09)",
-    text: "#9391a7",
-    line: "#9655ff",
-  },
-  light: {
-    up: "#508018",
-    down: "#be1133",
-    grid: "rgba(103,43,201,0.11)",
-    text: "#636075",
-    line: "#672bc9",
-  },
-} as const;
+// lightweight-charts cannot parse oklch(), so the tokens are mirrored here as hex.
+const UP = "#3fdc91";
+const DOWN = "#ff5f70";
+const GRID = "#1c1813";
+const AXIS = "#8b8175";
 
-const STATUS_LABEL: Record<string, string> = {
-  live: "LIVE",
-  closed: "CLOSED",
-  connecting: "CONNECTING",
-  offline: "OFFLINE",
-};
+// Three months of daily bars is about as dense as candles stay readable on a phone.
+const PERIODS = [
+  { value: "1mo", label: "1M" },
+  { value: "3mo", label: "3M" },
+  { value: "6mo", label: "6M" },
+  { value: "1y", label: "1Y" },
+];
 
-export function PriceChart({ ticker }: { ticker: string }) {
+export function PriceChart({ ticker, tick }: { ticker: string; tick: Tick | null }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
-  // The last live bar, replayed after a theme rebuild drops the series.
+  // The last live bar, replayed after a period change swaps the whole series out.
   const liveBarRef = useRef<CandlestickData | null>(null);
-  const { resolvedTheme } = useTheme();
+  const [period, setPeriod] = useState("3mo");
 
-  const history = useQuery({
-    queryKey: ["history", ticker],
-    queryFn: () => fetchHistory(ticker, "6mo", "1d"),
-    enabled: !!ticker,
-  });
-  const { tick, status } = useLivePrice(ticker || null);
+  const history = useHistory(ticker, period);
 
-  // Build the chart, and rebuild it when the theme flips so colours stay in sync.
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-
-    const c = resolvedTheme === "light" ? PALETTE.light : PALETTE.dark;
 
     const chart = createChart(el, {
       autoSize: true,
       layout: {
         background: { type: ColorType.Solid, color: "transparent" },
-        textColor: c.text,
-        fontFamily: "var(--font-mono)",
+        textColor: AXIS,
+        fontFamily: "inherit",
+        attributionLogo: false,
       },
-      grid: { vertLines: { color: c.grid }, horzLines: { color: c.grid } },
-      rightPriceScale: { borderColor: c.grid },
-      timeScale: { borderColor: c.grid },
+      grid: { vertLines: { visible: false }, horzLines: { color: GRID } },
+      rightPriceScale: { borderVisible: false },
+      timeScale: { borderVisible: false },
       crosshair: { mode: 0 },
     });
 
     seriesRef.current = chart.addSeries(CandlestickSeries, {
-      upColor: c.up,
-      downColor: c.down,
-      wickUpColor: c.up,
-      wickDownColor: c.down,
+      upColor: UP,
+      downColor: DOWN,
+      wickUpColor: UP,
+      wickDownColor: DOWN,
       borderVisible: false,
+      priceLineVisible: false,
     });
     chartRef.current = chart;
 
@@ -94,35 +72,32 @@ export function PriceChart({ ticker }: { ticker: string }) {
       chartRef.current = null;
       seriesRef.current = null;
     };
-  }, [resolvedTheme]);
+  }, []);
 
-  // Feed data whenever the query resolves (or the chart was rebuilt).
   useEffect(() => {
     const series = seriesRef.current;
     if (!series || !history.data) return;
-    const data = history.data.map((c: Candle) => ({
-      time: c.time,
-      open: c.open,
-      high: c.high,
-      low: c.low,
-      close: c.close,
-    })) as CandlestickData[];
-    series.setData(data);
-    // A rebuild wipes the live bar, so put the last one back on top of history.
+    series.setData(
+      history.data.map((c) => ({
+        time: c.time,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+      })) as CandlestickData[]
+    );
     if (liveBarRef.current) series.update(liveBarRef.current);
     chartRef.current?.timeScale().fitContent();
-  }, [history.data, resolvedTheme]);
+  }, [history.data]);
 
-  // Fold each tick into today's candle; update() throws if time goes backwards.
+  // Fold each tick into today's bar; update() throws if time ever goes backwards.
   useEffect(() => {
     const series = seriesRef.current;
     if (!series || !tick || !history.data?.length) return;
     if (tick.symbol !== ticker) return;
+    if (tick.session_date < history.data[history.data.length - 1].time) return;
 
-    const lastHistory = history.data[history.data.length - 1].time;
-    if (tick.session_date < lastHistory) return;
-
-    const bar: CandlestickData = {
+    const bar = {
       time: tick.session_date,
       open: tick.open,
       high: tick.high,
@@ -134,74 +109,34 @@ export function PriceChart({ ticker }: { ticker: string }) {
   }, [tick, ticker, history.data]);
 
   return (
-    <Card className="relative gap-2 p-0">
-      {/* Only while the feed is actually live — it is a status signal, not decor. */}
-      {status === "live" && <BorderBeam size={90} duration={7} borderWidth={1} />}
-      <div className="flex items-center gap-3 border-b px-3 py-1.5 text-[10px] tracking-wide uppercase">
-        <span className="text-primary">6M · 1D</span>
-        {history.isError && <span className="text-negative">chart failed to load</span>}
-        <span className="ml-auto flex items-center gap-1.5">
-          <span
+    <div>
+      <div className="relative h-56 w-full">
+        {/* The container stays mounted: the chart is created against this ref on mount. */}
+        <div ref={containerRef} className="h-full w-full" />
+        {history.isPending && <Skeleton className="absolute inset-0" />}
+        {history.isError && (
+          <p className="absolute inset-0 flex items-center text-sm text-ink-3">
+            No price history for this one.
+          </p>
+        )}
+      </div>
+
+      <div className="mt-2 flex gap-1">
+        {PERIODS.map((p) => (
+          <button
+            key={p.value}
+            type="button"
+            onClick={() => setPeriod(p.value)}
+            aria-pressed={period === p.value}
             className={cn(
-              "inline-block size-1.5",
-              status === "live"
-                ? "animate-pulse bg-positive"
-                : status === "closed"
-                  ? "bg-muted-foreground"
-                  : "bg-primary"
-            )}
-          />
-          <span
-            className={cn(
-              status === "live" ? "text-positive" : "text-muted-foreground"
+              "h-9 flex-1 rounded-md text-[13px] font-medium transition-colors",
+              period === p.value ? "bg-muted text-foreground" : "text-ink-3"
             )}
           >
-            {STATUS_LABEL[status]}
-          </span>
-          {tick && <LivePrice tick={tick} />}
-        </span>
+            {p.label}
+          </button>
+        ))}
       </div>
-      {/* The container must always be mounted — the chart is created against this
-          ref on mount, so swapping it out for a skeleton would leave it null. */}
-      <div className="relative h-[340px] w-full px-1 pb-1">
-        <div ref={containerRef} className="h-full w-full" />
-        {history.isLoading && <Skeleton className="absolute inset-0" />}
-      </div>
-    </Card>
-  );
-}
-
-/** Flash the cell in the direction of the move; digits stay readable. */
-function LivePrice({ tick }: { tick: Tick }) {
-  const up = (tick.change ?? 0) >= 0;
-  const prev = useRef<number | null>(null);
-  const [flash, setFlash] = useState<"up" | "down" | null>(null);
-
-  useEffect(() => {
-    const last = prev.current;
-    prev.current = tick.price;
-    if (last === null || last === tick.price) return;
-    setFlash(tick.price > last ? "up" : "down");
-    const id = setTimeout(() => setFlash(null), 600);
-    return () => clearTimeout(id);
-  }, [tick.price]);
-
-  return (
-    <span className="tabular flex items-center gap-2 border-l pl-2">
-      <span
-        className={cn(
-          "px-1 text-foreground",
-          flash === "up" && "tick-up",
-          flash === "down" && "tick-down"
-        )}
-      >
-        {tick.price.toFixed(2)}
-      </span>
-      {tick.change_percent != null && (
-        <span className={up ? "text-positive" : "text-negative"}>
-          {up ? "▲" : "▼"} {Math.abs(tick.change_percent).toFixed(2)}%
-        </span>
-      )}
-    </span>
+    </div>
   );
 }

@@ -2,7 +2,6 @@ import axios, { AxiosError } from "axios";
 
 import { authHeader, clearToken, getToken } from "@/lib/auth";
 
-// The FastAPI backend. Everything the UI needs comes through here.
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 const client = axios.create({
@@ -10,30 +9,25 @@ const client = axios.create({
   headers: { "Content-Type": "application/json" },
 });
 
-// Attach the session token per request rather than once at creation — it changes
-// on login and logout, and a client built at import time would hold a stale one.
+// Read the token per request: a client built at import time would hold the one from before login.
 client.interceptors.request.use((config) => {
   const token = getToken();
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
 
-// Surface the backend's error detail as a plain Error message.
 client.interceptors.response.use(
   (res) => res,
   (error: AxiosError<{ detail?: string }>) => {
     const status = error.response?.status;
-    // An expired or revoked token: drop it so the app stops retrying with a
-    // credential the server has already rejected. Clearing notifies AuthProvider,
-    // which sends the user to /login.
+    // Drop a credential the server already rejected; AuthProvider hears the clear and redirects.
     if (status === 401 && !isAuthPath(error.config?.url)) clearToken();
     const detail = error.response?.data?.detail;
     throw new Error(detail ?? error.message ?? `Request failed${status ? `: ${status}` : ""}`);
   }
 );
 
-// A 401 from /auth/login is "wrong password", not "session expired" — clearing the
-// token there would log out a user who simply mistyped on the change-password form.
+// A 401 here means "wrong password", so clearing would sign out someone who simply mistyped.
 function isAuthPath(url?: string): boolean {
   return !!url && (url.startsWith("/auth/login") || url.startsWith("/auth/register"));
 }
@@ -107,19 +101,33 @@ export const fetchHistory = (ticker: string, period = "6mo", interval = "1d") =>
     .get<Candle[]>(`/market/history/${ticker.toUpperCase()}`, { params: { period, interval } })
     .then((res) => res.data);
 
+export type MarketKey = "IN" | "US";
+
+export type MarketSession = {
+  market: MarketKey;
+  label: string;
+  timezone: string;
+  local_time: string;
+  opens: string;
+  closes: string;
+  is_open: boolean;
+};
+
+export const fetchMarketSessions = () =>
+  getJSON<Record<MarketKey, MarketSession>>("/market/sessions");
+
 /* ---- PORTFOLIO / TRADING ---- */
 
 export type PositionSummary = {
   ticker: string;
   quantity: number;
-  /** The stock's own listing currency — "INR" for .NS/.BO, "USD" for US. */
+  /** The stock's own listing currency, INR for .NS/.BO and USD for US names. */
   currency: string;
   average_buy_price: number;
   current_price: number;
   current_value: number;
   pnl: number;
   pnl_percent: number;
-  /** Denominated in base_currency; null when the FX lookup failed. */
   base_currency: string;
   fx_rate: number | null;
   current_value_base: number | null;
@@ -133,7 +141,7 @@ export type PortfolioSummary = {
   cash_balance: number;
   total_portfolio_value: number;
   total_pnl: number;
-  /** Tickers excluded from the total because no FX rate was available. */
+  /** Tickers left out of the total because no FX rate was available. */
   unconverted: string[];
   positions: PositionSummary[];
 };
@@ -162,23 +170,6 @@ export const executeTrade = (trade: TradeRequest) =>
 
 /* ---- SCANNER ---- */
 
-export type MarketKey = "IN" | "US";
-
-export type MarketSession = {
-  market: MarketKey;
-  label: string;
-  timezone: string;
-  local_time: string;
-  opens: string;
-  closes: string;
-  is_open: boolean;
-};
-
-/** Open/closed state per market. The scan response embeds the same shape. */
-export const fetchMarketSessions = () =>
-  getJSON<Record<MarketKey, MarketSession>>("/market/sessions");
-
-/** Universe selector accepted by the scanner. */
 export type UniverseKey = "ALL" | "IN" | "NSE" | "BSE" | "US";
 
 export type ScanCandidate = {
@@ -204,7 +195,7 @@ export type TriageEntry = {
   worth_deep_analysis: boolean;
 };
 
-/** Where the scanned universe came from: live movers, the offline fallback list, or caller-supplied. */
+/** Whether the universe came from live movers, the offline fallback list, or the caller. */
 export type UniverseSource = "discovery" | "fallback" | "explicit";
 
 export type ScanResult = {
@@ -220,7 +211,7 @@ export type ScanResult = {
 export const fetchScan = (limit = 10, triage = true, market: UniverseKey = "ALL") =>
   getJSON<ScanResult>(`/scanner/?limit=${limit}&triage=${triage}&market=${market}`);
 
-/* ---- PORTFOLIO ADVISOR ---- */
+/* ---- ADVISOR ---- */
 
 export type AdvisorPosition = {
   ticker: string;
@@ -252,7 +243,7 @@ export type AdvisorResult = {
 
 export const fetchAdvisorSuggestions = () => getJSON<AdvisorResult>("/advisor/suggestions");
 
-/* ---- WORKFLOW / EXPLAINABLE RECOMMENDATION ---- */
+/* ---- RECOMMENDATIONS ---- */
 
 export type TechnicalLatest = {
   price: number | null;
@@ -263,20 +254,18 @@ export type TechnicalLatest = {
   adx: number | null;
 };
 
-/** Per-ticker risk block (volatility %, beta vs its market index, and the level). */
 export type RiskBlock = {
   volatility: number | null;
   beta: number | null;
-  risk_level: string | null; // LOW | MODERATE | HIGH | UNKNOWN
+  risk_level: string | null;
   benchmark?: string | null;
-  /** True when high vol/beta pulled confidence down from HIGH to MEDIUM. */
+  /** True when high volatility or beta pulled confidence down from HIGH to MEDIUM. */
   confidence_capped?: boolean;
 };
 
-/** A lesson learned on a DIFFERENT ticker that was in a similar setup. */
+/** A lesson learned on a different ticker that was in a similar setup. */
 export type CrossTickerLesson = { ticker: string | null; content: string };
 
-/** Why the lesson lists look the way they do — see the backend's _lesson_status. */
 export type LearningStatus =
   | "ok"
   | "no_lessons_yet"
@@ -284,6 +273,13 @@ export type LearningStatus =
   | "index_degraded"
   | "unavailable"
   | "unknown";
+
+export type PastRecommendation = {
+  action: string;
+  confidence: string;
+  rationale: string | null;
+  at: string;
+};
 
 export type RecommendationExplanation = {
   confidence: string;
@@ -322,17 +318,10 @@ export type RecommendationExplanation = {
   };
 };
 
-export type PastRecommendation = {
-  action: string;
-  confidence: string;
-  rationale: string | null;
-  at: string;
-};
-
 export type Recommendation = {
   symbol: string;
-  action: string; // BUY | HOLD | SELL
-  confidence: string; // LOW | MEDIUM | HIGH
+  action: string;
+  confidence: string;
   rationale: string | null;
   explanation: RecommendationExplanation;
   catalysts: string[];
@@ -356,7 +345,7 @@ export const fetchRecommendationHistory = (ticker?: string, limit = 20) =>
 
 /* ---- REPORTS ---- */
 
-/** One limiter's budget. `requests`/`tokens` are the last 60s; `requests_today` is the day. */
+/** One limiter's budget: requests and tokens are the last 60s, requests_today is the day. */
 export type QuotaSnapshot = {
   requests: number;
   rpm: number;
@@ -365,7 +354,7 @@ export type QuotaSnapshot = {
   requests_today: number;
   rpd: number | null;
   day: string | null;
-  /** When the daily budget rolls over (midnight US Pacific), ISO. */
+  /** When the daily budget rolls over, midnight US Pacific, as ISO. */
   resets_at: string | null;
 };
 
@@ -373,8 +362,7 @@ export type QuotaResponse = { chat: QuotaSnapshot; embedding: QuotaSnapshot };
 
 export const fetchQuota = () => getJSON<QuotaResponse>("/reports/quota");
 
-/* Every section is built inside its own try/except, so any one of them can come
-   back as just `{ error }` while the rest succeeded. Hence the optional fields. */
+/* Each report section is built in its own try/except, so any one can arrive as just { error }. */
 
 export type RiskNarration = {
   summary: string;
@@ -408,7 +396,7 @@ export type ReportRisk = {
   portfolio?: PortfolioRiskMetrics | null;
   positions?: ReportRiskPosition[];
   sector_exposure?: Record<string, number>;
-  /** Set when the book is empty — there was nothing to analyse. */
+  /** Set when the book is empty and there was nothing to analyse. */
   message?: string;
   analysis?: RiskNarration;
   error?: string;
@@ -454,7 +442,7 @@ export type DailyReport = {
   allocation: ReportAllocation | null;
 };
 
-/** Spends two chat calls. Throws on 409 (already running) and 429 (out of quota). */
+/** Spends two chat calls; throws on 409 (already running) and 429 (out of quota). */
 export const generateDailyReport = () => postJSON<DailyReport>("/reports/daily", {});
 
 export const fetchLatestReport = () => getJSON<DailyReport | null>("/reports/latest");
@@ -476,8 +464,7 @@ export type MemoryEntry = {
 export const fetchRecentMemory = (type?: string, limit = 20) =>
   getJSON<MemoryEntry[]>(`/memory/recent?limit=${limit}${type ? `&type=${type}` : ""}`);
 
-/** Is the learning loop alive? `index_exists` means the Atlas vector index answered;
- *  `unindexed_entries` counts memories with no vector, invisible to search. */
+/** index_exists means the Atlas vector index answered; unindexed entries are invisible to search. */
 export type MemoryHealth = {
   user_id: string;
   status: LearningStatus;
@@ -488,7 +475,7 @@ export type MemoryHealth = {
 
 export const fetchMemoryHealth = () => getJSON<MemoryHealth>("/memory/health");
 
-/* ---- STREAMING (Server-Sent Events) ---- */
+/* ---- STREAMING ---- */
 
 export type DebateArgument = {
   stance: "BULL" | "BEAR";
@@ -516,32 +503,34 @@ export type DebateMemory = {
   status?: LearningStatus;
 };
 
-// Events from GET /debate/{ticker}/stream.
 export type DebateEvent =
   | { type: "status"; phase: string; message: string }
   | { type: "memory"; memory: DebateMemory }
   | { type: "opening"; round: number; bull: DebateArgument; bear: DebateArgument }
-  | { type: "rebuttal"; round: number; bull: DebateArgument; bear: DebateArgument; converged: boolean }
+  | {
+      type: "rebuttal";
+      round: number;
+      bull: DebateArgument;
+      bear: DebateArgument;
+      converged: boolean;
+    }
   | { type: "decision"; model: string | null; decision: DebateDecision; decision_valid?: boolean }
   | { type: "done"; symbol: string }
   | { type: "error"; message: string };
 
-// Read a Server-Sent Events stream, calling onEvent for each parsed payload.
+// fetch, not EventSource: EventSource cannot send headers, so the token would land in access logs.
 async function consumeSSE<T>(
   path: string,
   onEvent: (ev: T) => void,
   signal?: AbortSignal
 ): Promise<void> {
-  // Uses fetch rather than EventSource precisely because EventSource cannot send
-  // headers — the bearer token would have to go in the query string, where it
-  // would land in access logs.
   const res = await fetch(`${API_URL}/api${path}`, {
     headers: { Accept: "text/event-stream", ...authHeader() },
     signal,
   });
   if (res.status === 401) {
     clearToken();
-    throw new Error("Session expired — please sign in again.");
+    throw new Error("Your session expired. Sign in again.");
   }
   if (!res.ok || !res.body) throw new Error(`Stream failed: ${res.status}`);
 
@@ -549,8 +538,8 @@ async function consumeSSE<T>(
   const decoder = new TextDecoder();
   let buffer = "";
 
-  // SSE wire format: events separated by a blank line, payload on `data:` lines.
-  while (true) {
+  // SSE wire format: events separated by a blank line, payload on the data: lines.
+  for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
@@ -568,13 +557,13 @@ async function consumeSSE<T>(
       try {
         onEvent(JSON.parse(data) as T);
       } catch {
-        // ignore malformed keep-alive/comment lines
+        // keep-alive and comment lines are not JSON
       }
     }
   }
 }
 
-/** Stream a live Bull-vs-Bear committee debate. */
+/** Stream a live bull-versus-bear committee debate. */
 export function streamDebate(
   ticker: string,
   opts: { news?: boolean; rounds?: number },
@@ -585,13 +574,14 @@ export function streamDebate(
     news: String(opts.news ?? true),
     rounds: String(opts.rounds ?? 2),
   });
-  return consumeSSE<DebateEvent>(`/debate/${ticker.toUpperCase()}/stream?${params}`, onEvent, signal);
+  return consumeSSE<DebateEvent>(
+    `/debate/${ticker.toUpperCase()}/stream?${params}`,
+    onEvent,
+    signal
+  );
 }
 
-/* ---- STREAMING WORKFLOW (full analysis pipeline) ---- */
-
-// Five gathering nodes run in parallel, then recall and research run in sequence
-// on their output before the routing gate.
+// Five gathering nodes run in parallel, then recall and research run on their output before the gate.
 export type WorkflowNode =
   | "profile"
   | "technical"
@@ -604,27 +594,27 @@ export type WorkflowNode =
 export type Consensus = {
   votes: Record<string, number>;
   independent_votes: Record<string, number>;
+  /** Voters with no opinion; an abstention alone is enough to force the committee. */
+  abstained?: string[];
   score: number;
   signals: number;
   unanimous: boolean;
   research_dissent: boolean;
-  // A high-volatility or high-beta name never takes the fast path.
+  /** A high-volatility or high-beta name never takes the fast path. */
   risk_veto: boolean;
-  // Gathering nodes that failed, which also blocks the fast path.
+  /** Gathering nodes that failed, which also blocks the fast path. */
   incomplete: string[];
   route: "quick" | "debate";
   action: string | null;
   confidence: string | null;
 };
 
-// Events from GET /workflow/{ticker}/stream.
 export type WorkflowEvent =
   | { type: "status"; message: string }
   | {
       type: "node";
       node: WorkflowNode;
       status: "running" | "done" | "error";
-      // What the agent found; the findings panel renders this per node.
       data?: Record<string, unknown>;
       warnings?: string[];
     }
@@ -637,26 +627,28 @@ export type WorkflowEvent =
   | { type: "done"; symbol: string; errors?: string[] }
   | { type: "error"; message: string };
 
-/** Stream the full analysis pipeline (data-gathering → routing → debate → recommendation). */
+/** fresh=true starts a new thread instead of resuming today's checkpoint for this ticker. */
 export function streamWorkflow(
   ticker: string,
-  opts: { news?: boolean; rounds?: number },
+  opts: { news?: boolean; rounds?: number; fresh?: boolean },
   onEvent: (ev: WorkflowEvent) => void,
   signal?: AbortSignal
 ): Promise<void> {
   const params = new URLSearchParams({
     news: String(opts.news ?? true),
     rounds: String(opts.rounds ?? 2),
+    fresh: String(opts.fresh ?? false),
   });
-  return consumeSSE<WorkflowEvent>(`/workflow/${ticker.toUpperCase()}/stream?${params}`, onEvent, signal);
+  return consumeSSE<WorkflowEvent>(
+    `/workflow/${ticker.toUpperCase()}/stream?${params}`,
+    onEvent,
+    signal
+  );
 }
 
 /* ---- AUTH ---- */
 
-export type AuthUser = {
-  id: string;
-  email: string;
-};
+export type AuthUser = { id: string; email: string };
 
 export type TokenResponse = {
   access_token: string;
@@ -671,7 +663,7 @@ export const login = (email: string, password: string) =>
 export const register = (email: string, password: string) =>
   postJSON<TokenResponse>("/auth/register", { email, password });
 
-/** Validates a stored token on boot; throws (and the interceptor clears it) if stale. */
+/** Validates a stored token on boot; the interceptor clears it if the server says no. */
 export const fetchMe = () => getJSON<AuthUser>("/auth/me");
 
 export const changePassword = (current_password: string, new_password: string) =>

@@ -222,9 +222,15 @@ def _signal_votes(state: AnalysisState) -> dict:
     return votes
 
 
-# Research reads the same evidence as the other nodes, so its vote is shown but not
-# counted toward unanimity — only a dissent from it forces the debate.
-_DERIVED_SIGNALS = {"research"}
+# Every agent with a direction is a voter; memory and profile have none and risk only vetoes.
+_VOTERS = ("technical", "fundamental", "news", "research")
+
+
+def _expected_voters(state: AnalysisState) -> tuple[str, ...]:
+    # News is the only voter that can be switched off, so it is required only when it ran.
+    if state.get("include_news", True):
+        return _VOTERS
+    return tuple(v for v in _VOTERS if v != "news")
 
 
 def _gather_failed(state: AnalysisState) -> list[str]:
@@ -235,34 +241,37 @@ def _gather_failed(state: AnalysisState) -> list[str]:
 
 def _consensus(state: AnalysisState) -> dict:
     votes = _signal_votes(state)
-    independent = {
-        k: v for k, v in votes.items() if k not in _DERIVED_SIGNALS and v != 0
-    }
-    total = sum(independent.values())
-    n = len(independent)
-    # Unanimous = at least two independent signals all pointing the same way.
-    unanimous = n >= 2 and abs(total) == n
+    expected = _expected_voters(state)
+    cast = {v: votes[v] for v in expected if votes.get(v, 0) != 0}
 
-    # Research must not contradict them for the quick path.
+    # An agent with no opinion is not an agreeing agent, so abstaining blocks the fast path.
+    abstained = [v for v in expected if v not in cast]
+    directions = {1 if x > 0 else -1 for x in cast.values()}
+    # Unanimous means every expected voter spoke and they all pointed the same way.
+    unanimous = not abstained and len(directions) == 1
+
+    # Still reported on its own: research contradicting the indicators is worth naming.
     research = votes.get("research", 0)
-    dissent = bool(unanimous and research and (research > 0) != (total > 0))
+    others = [x for k, x in cast.items() if k != "research"]
+    dissent = bool(research and others and any((o > 0) != (research > 0) for o in others))
 
-    # Risk has magnitude, not direction, so it vetoes the fast path rather than voting:
-    # a high-vol or high-beta name always gets the committee, however aligned the signals.
+    # Risk has magnitude, not direction, so it vetoes the fast path rather than voting.
     risk_veto = _risk_caps_confidence(state.get("risk"))
     incomplete = _gather_failed(state)
 
-    skip_debate = unanimous and not dissent and not risk_veto and not incomplete
+    skip_debate = unanimous and not risk_veto and not incomplete
+    total = sum(cast.values())
     action = confidence = None
     if skip_debate:
         action = "BUY" if total > 0 else "SELL"
-        # HIGH only when all three signals line up.
-        confidence = "HIGH" if n >= 3 else "MEDIUM"
+        # Every voter agreeing is the strongest read available, unless one was switched off.
+        confidence = "HIGH" if len(expected) == len(_VOTERS) else "MEDIUM"
     return {
         "votes": votes,
-        "independent_votes": independent,
+        "independent_votes": cast,
+        "abstained": abstained,
         "score": total,
-        "signals": n,
+        "signals": len(cast),
         "unanimous": unanimous,
         "research_dissent": dissent,
         "risk_veto": risk_veto,
@@ -290,9 +299,8 @@ async def quick_decision_node(state: AnalysisState) -> dict:
         "decision": c.get("action", "HOLD"),
         "confidence": c.get("confidence", "MEDIUM"),
         "rationale": (
-            f"All {c.get('signals', 0)} independent signals aligned {direction} and the "
-            "research agent did not dissent; the Bull/Bear committee debate was "
-            "skipped as unnecessary."
+            f"All {c.get('signals', 0)} agents agreed {direction} with none abstaining, "
+            "so the Bull/Bear committee debate was skipped as unnecessary."
         ),
         "key_catalysts": [],
         "key_risks": [],
@@ -415,6 +423,8 @@ async def recommendation_node(state: AnalysisState) -> dict:
             "path": "quick_decision" if debate.get("skipped") else "debate",
             "signal_votes": consensus.get("votes", {}),
             "independent_votes": consensus.get("independent_votes", {}),
+            # Agents that had no opinion, which is itself enough to force the committee.
+            "abstained": consensus.get("abstained", []),
             "unanimous": consensus.get("unanimous", False),
             "research_dissent": consensus.get("research_dissent", False),
             # Why a unanimous read still went to committee.

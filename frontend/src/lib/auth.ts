@@ -1,11 +1,5 @@
-// The session token, kept outside React so the axios interceptor and the SSE
-// reader can both read it synchronously on every request.
-//
-// It lives in localStorage rather than an httpOnly cookie because the frontend and
-// API are on different origins (Vercel vs. the API host), which would force
-// SameSite=None cross-site cookies. The tradeoff is that any XSS on this page can
-// read the token — acceptable for a paper-trading app with no real money or PII,
-// and worth revisiting if that ever changes.
+// The token lives outside React so the axios interceptor and the socket can both read it synchronously.
+// localStorage rather than an httpOnly cookie because the UI and API sit on different origins.
 
 const TOKEN_KEY = "alphaforge.token";
 
@@ -38,8 +32,7 @@ export function clearToken(): void {
   listeners.forEach((fn) => fn());
 }
 
-/** Notified when the token is set or cleared — including by the 401 interceptor,
- *  which is how an expired session propagates to the UI without a page reload. */
+// Fires on the interceptor's mid-session clear too, which is how an expired session reaches the UI.
 export function onTokenChange(fn: Listener): () => void {
   listeners.add(fn);
   return () => listeners.delete(fn);

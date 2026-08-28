@@ -1,38 +1,26 @@
-import type { Metadata } from "next";
-import { Geist, IBM_Plex_Mono } from "next/font/google";
-import "./globals.css";
-import { cn } from "@/lib/utils";
-import { Providers } from "@/components/providers";
-import { AppShell } from "@/components/app-shell";
+import type { Metadata, Viewport } from "next";
 
-// Monospace is the identity; a clean sans is available for the rare long paragraph.
-const mono = IBM_Plex_Mono({
-  subsets: ["latin"],
-  weight: ["400", "500", "600"],
-  variable: "--font-mono",
-});
-const sans = Geist({ subsets: ["latin"], variable: "--font-sans" });
+import { Providers } from "@/components/providers";
+import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "AlphaForge AI",
-  description: "Autonomous investment research & paper trading",
+  title: "AlphaForge",
+  description: "Autonomous investment research and paper trading.",
+  appleWebApp: { capable: true, title: "AlphaForge", statusBarStyle: "black-translucent" },
 };
 
-export default function RootLayout({
-  children,
-}: Readonly<{ children: React.ReactNode }>) {
+export const viewport: Viewport = {
+  // Content reaches the display edges, and the layout pads itself back off the home indicator.
+  viewportFit: "cover",
+  themeColor: "#0b0a09",
+  colorScheme: "dark",
+};
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    // suppressHydrationWarning: next-themes sets the theme class on <html> before paint.
-    <html
-      lang="en"
-      suppressHydrationWarning
-      className={cn("h-full antialiased", mono.variable, sans.variable)}
-    >
-      <body className="min-h-full font-mono">
-        <Providers>
-          {/* AppShell owns the nav/main frame because /login renders without it. */}
-          <AppShell>{children}</AppShell>
-        </Providers>
+    <html lang="en" className="dark">
+      <body>
+        <Providers>{children}</Providers>
       </body>
     </html>
   );
