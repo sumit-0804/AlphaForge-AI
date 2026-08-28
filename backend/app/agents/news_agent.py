@@ -30,9 +30,14 @@ def _rss_url(query: str, country: str) -> str:
 
 
 SYSTEM_PROMPT = (
-    "You are AlphaForge News Agent. You are given recent news headlines for a "
-    "single stock. Summarise the news and judge market sentiment. "
-    "This is educational analysis, not financial advice."
+    "You are AlphaForge News Agent. You are given recent news headlines for a single "
+    "stock. Headlines may be in English or in an Indian language (Hindi, Marathi, "
+    "Tamil, Telugu, Gujarati, Bengali, Kannada). Read those directly — do not ask for "
+    "a translation — and write everything you return in English. Some headlines will "
+    "mention the company only in passing, or be about a different company entirely: "
+    "ignore those and judge sentiment only on the ones genuinely about this company. "
+    "If none of them are, say so and return NEUTRAL. Summarise the news and judge "
+    "market sentiment. This is educational analysis, not financial advice."
 )
 
 
@@ -57,9 +62,14 @@ class NewsAgentService:
 
     @staticmethod
     def _is_about(title: str | None, terms: list[str]) -> bool:
-        # Indian roundups ("8 stocks that hit upper circuit") name many tickers and say
-        # nothing about any of them; scoring sentiment on those is worse than no news.
+        # Roundups ("8 stocks that hit upper circuit") name many tickers and say nothing
+        # about any of them; scoring sentiment on those is worse than having no news.
         low = (title or "").lower()
+        letters = [c for c in low if c.isalpha()]
+        # Devanagari/Tamil/Telugu headlines cannot match Latin terms, so keep them and
+        # let the model judge the subject — it reads them natively.
+        if letters and sum(c.isascii() for c in letters) / len(letters) < 0.5:
+            return True
         return any(t in low for t in terms)
 
     @staticmethod
@@ -121,6 +131,8 @@ class NewsAgentService:
                     },
                 }
 
+            name = cls._company_name(ticker.upper())
+            subject = f"{ticker.upper()}" + (f" ({name})" if name else "")
             headlines = [
                 {"title": a["title"], "source": a["source"]} for a in articles
             ]
@@ -129,7 +141,7 @@ class NewsAgentService:
                 {
                     "role": "user",
                     "content": (
-                        f"News headlines for {ticker.upper()}:\n"
+                        f"News headlines for {subject}:\n"
                         f"{json.dumps(headlines, indent=2)}\n\n"
                         "Return the JSON analysis now."
                     ),
