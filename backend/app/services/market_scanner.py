@@ -26,7 +26,8 @@ NSE_UNIVERSE = [
     "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS",
     "SBIN.NS", "BHARTIARTL.NS", "ITC.NS", "LT.NS", "KOTAKBANK.NS",
     "HINDUNILVR.NS", "AXISBANK.NS", "BAJFINANCE.NS", "MARUTI.NS",
-    "SUNPHARMA.NS", "TATAMOTORS.NS", "TATASTEEL.NS", "WIPRO.NS",
+    # Tata Motors demerged: TMCV holds the commercial vehicles, TMPV the passenger ones.
+    "SUNPHARMA.NS", "TMCV.NS", "TMPV.NS", "TATASTEEL.NS", "WIPRO.NS",
     "HCLTECH.NS", "ADANIENT.NS",
 ]
 
