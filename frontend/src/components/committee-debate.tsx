@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import {
   streamDebate,
   type DebateArgument,
@@ -11,6 +11,7 @@ import {
 import { cn } from "@/lib/utils";
 import { ActionBadge, ConfidenceBadge } from "@/components/status-badges";
 import { LearningStatusNote } from "@/components/learning-status";
+import { AnimatedSpan, Terminal } from "@/components/ui/terminal";
 
 /* ---------- streaming state (unchanged logic) ---------- */
 
@@ -92,280 +93,222 @@ export function useDebateStream() {
   return { state, run, cancel };
 }
 
-/* ---------- chat pieces ---------- */
 
-function Avatar({ side }: { side: "bull" | "bear" }) {
-  const bull = side === "bull";
+/* ---------- terminal transcript ---------- */
+
+const TONE = {
+  bull: "text-positive",
+  bear: "text-negative",
+  sys: "text-primary",
+} as const;
+
+// One prefixed line. `stream` is what a shell prompt would be: who is speaking.
+function Line({
+  stream,
+  marker = ">",
+  tone = "sys",
+  icon,
+  children,
+  className,
+}: {
+  stream?: string;
+  marker?: string;
+  tone?: keyof typeof TONE;
+  icon?: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
   return (
-    <div
-      className={cn(
-        "grid size-7 shrink-0 place-items-center text-sm ring-1 ring-inset",
-        bull ? "bg-positive/12 ring-positive/25" : "bg-negative/12 ring-negative/25"
-      )}
-      aria-hidden
-    >
-      {bull ? "🐂" : "🐻"}
-    </div>
-  );
-}
-
-function TypingDots({ side }: { side: "bull" | "bear" }) {
-  return (
-    <span className="inline-flex items-center gap-1 py-0.5">
-      {[0, 150, 300].map((delay) => (
-        <span
-          key={delay}
-          className={cn("size-1.5 animate-bounce rounded-full", side === "bull" ? "bg-positive" : "bg-negative")}
-          style={{ animationDelay: `${delay}ms` }}
-        />
-      ))}
-    </span>
-  );
-}
-
-// One analyst's turn as a group of chat bubbles.
-function MessageGroup({ side, arg, isOpening }: { side: "bull" | "bear"; arg: DebateArgument; isOpening: boolean }) {
-  const bull = side === "bull";
-  const points = isOpening ? arg.arguments ?? [] : arg.rebuttals ?? arg.arguments ?? [];
-  const label = bull ? "Bull analyst" : "Bear analyst";
-  const bubble = "w-fit max-w-full px-3 py-2 text-xs/relaxed animate-in fade-in duration-300";
-  const tone = bull ? "bg-positive/10" : "bg-negative/10";
-
-  return (
-    <div className={cn("flex gap-2", bull ? "justify-start" : "flex-row-reverse justify-start")}>
-      <Avatar side={side} />
-      <div className={cn("flex min-w-0 max-w-[82%] flex-col gap-1", bull ? "items-start" : "items-end")}>
-        <div className={cn("flex items-center gap-2 px-1", bull ? "" : "flex-row-reverse")}>
-          <span className="text-[11px] font-medium text-muted-foreground">{label}</span>
-          {arg.concede && (
-            <span className="bg-amber-500/15 px-1.5 py-px text-[10px] font-medium text-amber-600">concedes</span>
-          )}
-          {arg.has_new_points === false && !arg.concede && (
-            <span className="bg-muted px-1.5 py-px text-[10px] text-muted-foreground">rests case</span>
-          )}
-        </div>
-
-        {points.length === 0 && <div className={cn(bubble, tone, "text-muted-foreground")}>…</div>}
-        {points.map((p, i) => (
-          <div key={i} className={cn(bubble, tone)} style={{ animationDelay: `${i * 90}ms` }}>
-            {!isOpening && i === 0 && <span className={cn("mr-1", bull ? "text-positive" : "text-negative")}>↳</span>}
-            {p}
-          </div>
-        ))}
-
-        {arg.key_point && (
-          <div className={cn(bubble, bull ? "bg-positive/20" : "bg-negative/20", "font-medium")}>
-            <span className={bull ? "text-positive" : "text-negative"}>★ </span>
-            {arg.key_point}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function RoundDivider({ round }: { round: number }) {
-  return (
-    <div className="my-1 flex justify-center">
-      <span className="bg-muted px-3 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        {round === 1 ? "Opening statements" : `Rebuttal · round ${round}`}
+    <AnimatedSpan className={cn("text-xs/relaxed", className)}>
+      <span className="flex gap-2">
+        {/* Fixed width: emoji are double-width, so the text column must not shift. */}
+        <span className="w-4 shrink-0 text-center leading-none">{icon}</span>
+        <span className={cn("shrink-0 tabular", TONE[tone])}>
+          {stream ? `${stream}${marker}` : marker}
+        </span>
+        <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{children}</span>
       </span>
-    </div>
+    </AnimatedSpan>
   );
 }
 
-// What the committee remembered before arguing: this stock's own lessons, plus
-// transferable lessons from other tickers in a similar setup.
-function MemoryNote({ memory }: { memory: DebateMemory }) {
+function Command({ icon, children }: { icon?: string; children: React.ReactNode }) {
+  return (
+    <AnimatedSpan className="mt-2 text-xs">
+      <span className="flex gap-2">
+        <span className="w-4 shrink-0 text-center leading-none">{icon}</span>
+        <span className="shrink-0 text-primary">$</span>
+        <span className="text-foreground">{children}</span>
+      </span>
+    </AnimatedSpan>
+  );
+}
+
+function MemoryBlock({ memory }: { memory: DebateMemory }) {
   const prior = memory.prior_lessons ?? [];
   const cross = memory.cross_ticker_lessons ?? [];
-  const hasAny = prior.length > 0 || cross.length > 0;
-
   return (
-    <div className="mx-auto w-full max-w-lg animate-in fade-in duration-500">
-      <div className="bg-primary/8 px-3 py-2.5 text-xs ring-1 ring-inset ring-primary/20">
-        {hasAny ? (
-          <>
-            <p className="mb-1.5 font-medium text-primary">🧠 The committee recalls past trades</p>
-            {prior.length > 0 && (
-              <ul className="space-y-0.5">
-                {prior.map((l, i) => (
-                  <li key={`p${i}`} className="leading-snug text-muted-foreground">
-                    • {l}
-                  </li>
-                ))}
-              </ul>
-            )}
-            {cross.length > 0 && (
-              <div className="mt-1.5 border-t border-primary/15 pt-1.5">
-                <p className="mb-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                  From similar setups on other stocks
-                </p>
-                <ul className="space-y-0.5">
-                  {cross.map((c, i) => (
-                    <li key={`c${i}`} className="leading-snug text-muted-foreground">
-                      • <span className="font-medium text-foreground">{c.ticker ?? "—"}</span>: {c.content}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </>
-        ) : (
-          <p className="text-center text-muted-foreground">
-            🧠 <LearningStatusNote status={memory.status} empty="No prior memory for this setup — starting fresh." />
-          </p>
-        )}
-      </div>
-    </div>
+    <>
+      <Command icon="🧠">recall --lessons</Command>
+      {prior.length === 0 && cross.length === 0 && (
+        <Line marker="·" className="text-muted-foreground">
+          <LearningStatusNote status={memory.status} empty="no prior memory for this setup — starting fresh" />
+        </Line>
+      )}
+      {prior.map((l, i) => (
+        <Line key={`p${i}`} marker="·" className="text-muted-foreground">
+          {l}
+        </Line>
+      ))}
+      {cross.map((c, i) => (
+        <Line key={`c${i}`} marker="·" className="text-muted-foreground">
+          <span className="text-foreground">{c.ticker ?? "—"}</span> {c.content}
+        </Line>
+      ))}
+    </>
   );
 }
 
-function Verdict({ decision, model }: { decision: DebateDecision; model: string | null }) {
+// An analyst's turn: their points, then the one they lead with.
+function Turn({ side, arg, opening }: { side: "bull" | "bear"; arg: DebateArgument; opening: boolean }) {
+  const points = opening ? arg.arguments ?? [] : arg.rebuttals ?? arg.arguments ?? [];
+  const face = side === "bull" ? "🐂" : "🐻";
   return (
-    <div className="mx-auto w-full max-w-lg animate-in fade-in slide-in-from-bottom-3 duration-500">
-      <div className="flex justify-center">
-        <span className="bg-muted px-3 py-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-          ⚖️ The moderator delivers the verdict
-        </span>
-      </div>
-      <div className="mt-2 bg-card p-4 text-center ring-1 ring-inset ring-border">
-        <div className="mb-2 flex items-center justify-center gap-2">
+    <>
+      {points.length === 0 && (
+        <Line stream={side} tone={side} icon={face} className="text-muted-foreground">
+          …
+        </Line>
+      )}
+      {points.map((pt, i) => (
+        <Line key={i} stream={side} marker={opening ? ">" : "↳"} tone={side} icon={face}>
+          {pt}
+        </Line>
+      ))}
+      {arg.key_point && (
+        <Line stream={side} marker="*" tone={side} icon={face} className="font-medium">
+          {arg.key_point}
+        </Line>
+      )}
+      {arg.concede && (
+        <Line stream={side} marker="!" tone={side} icon={face} className="text-muted-foreground">
+          concedes
+        </Line>
+      )}
+      {arg.has_new_points === false && !arg.concede && (
+        <Line stream={side} marker="!" tone={side} icon={face} className="text-muted-foreground">
+          rests case
+        </Line>
+      )}
+    </>
+  );
+}
+
+function VerdictBlock({ decision, model }: { decision: DebateDecision; model: string | null }) {
+  const catalysts = decision.key_catalysts ?? [];
+  const risks = decision.key_risks ?? [];
+  return (
+    <>
+      <Command icon="⚖️">moderate --verdict</Command>
+      <AnimatedSpan className="mt-1">
+        <span className="flex flex-wrap items-center gap-2 pl-5">
           <ActionBadge value={decision.decision} />
           <ConfidenceBadge value={decision.confidence} />
-        </div>
-        {decision.rationale && <p className="text-xs/relaxed text-muted-foreground">{decision.rationale}</p>}
-
-        {((decision.key_catalysts?.length ?? 0) > 0 || (decision.key_risks?.length ?? 0) > 0) && (
-          <div className="mt-3 grid gap-3 text-left sm:grid-cols-2">
-            {(decision.key_catalysts?.length ?? 0) > 0 && (
-              <div>
-                <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Catalysts</p>
-                <ul className="space-y-1 text-xs">
-                  {decision.key_catalysts!.map((c, i) => (
-                    <li key={i} className="flex gap-2">
-                      <span className="text-positive">↑</span>
-                      <span>{c}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {(decision.key_risks?.length ?? 0) > 0 && (
-              <div>
-                <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Risks</p>
-                <ul className="space-y-1 text-xs">
-                  {decision.key_risks!.map((r, i) => (
-                    <li key={i} className="flex gap-2">
-                      <span className="text-negative">↓</span>
-                      <span>{r}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
-        )}
-        {model && <p className="mt-3 text-[10px] text-muted-foreground">decided by {model}</p>}
-      </div>
-    </div>
+        </span>
+      </AnimatedSpan>
+      {decision.rationale && (
+        <Line marker="·" className="text-muted-foreground">
+          {decision.rationale}
+        </Line>
+      )}
+      {catalysts.map((c, i) => (
+        <Line key={`up${i}`} marker="↑" tone="bull" className="text-muted-foreground">
+          {c}
+        </Line>
+      ))}
+      {risks.map((r, i) => (
+        <Line key={`dn${i}`} marker="↓" tone="bear" className="text-muted-foreground">
+          {r}
+        </Line>
+      ))}
+      {model && (
+        <Line marker="#" className="text-muted-foreground">
+          decided by {model}
+        </Line>
+      )}
+    </>
   );
 }
 
-/* ---------- the chat view ---------- */
-
 export function CommitteeDebate({ state }: { state: DebateState }) {
-  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const bodyRef = useRef<HTMLPreElement | null>(null);
 
-  // Auto-scroll to the newest message, but only if already near the bottom.
+  // Follow the newest line, but only when already near the bottom.
   useEffect(() => {
     const el = bodyRef.current;
     if (!el) return;
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
-    if (nearBottom) el.scrollTop = el.scrollHeight;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 140) el.scrollTop = el.scrollHeight;
   }, [state.rounds.length, state.decision, state.memory, state.running, state.error]);
 
-  if (!state.ticker) {
-    return (
-      <div className="bg-card p-12 text-center ring-1 ring-inset ring-border">
-        <div className="mb-2 text-3xl">🐂 ⚖️ 🐻</div>
-        <p className="text-xs text-muted-foreground">
-          Pick a ticker and open the floor — the Bull and Bear argue it out live.
-        </p>
-      </div>
-    );
-  }
+  if (!state.ticker) return null;
 
-  const waitingForNextRound = state.running && !state.decision && state.rounds.length > 0;
+  const rounds = state.rounds;
+  const waiting = state.running && !state.decision && rounds.length > 0;
 
   return (
-    <div className="flex flex-col overflow-hidden bg-card ring-1 ring-inset ring-border">
-      {/* chat header */}
-      <div className="flex items-center gap-2 border-b px-4 py-2.5">
-        <div className="flex -space-x-2">
-          <span className="grid size-6 place-items-center bg-positive/15 text-[11px] ring-2 ring-card">🐂</span>
-          <span className="grid size-6 place-items-center bg-negative/15 text-[11px] ring-2 ring-card">🐻</span>
-        </div>
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold leading-tight">{state.ticker} committee</p>
-          <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+    <Terminal
+      // sequence={false}: lines are driven by real SSE arrival, not a fake timer.
+      sequence={false}
+      className="max-h-[65vh] min-h-[20rem]"
+      bodyRef={bodyRef}
+      title={
+        <>
+          <span aria-hidden>🐂 ⚖️ 🐻</span>
+          <span className="text-primary">{state.ticker}</span>
+          <span className="text-muted-foreground">committee</span>
+          <span className="ml-auto flex items-center gap-1.5">
             <span
-              className={cn("inline-block size-1.5 rounded-full", state.running ? "animate-pulse bg-positive" : "bg-muted-foreground")}
+              className={cn("inline-block size-1.5", state.running ? "animate-pulse bg-positive" : "bg-muted-foreground")}
             />
-            {state.status || (state.running ? "live" : "idle")}
-          </p>
-        </div>
-        {state.rounds.length > 0 && (
-          <span className="ml-auto text-[11px] text-muted-foreground">
-            {state.rounds.length} round{state.rounds.length > 1 ? "s" : ""}
-            {state.rounds.at(-1)?.converged ? " · converged" : ""}
+            <span className="text-muted-foreground">{state.status || (state.running ? "live" : "idle")}</span>
+            {rounds.length > 0 && (
+              <span className="text-muted-foreground">
+                · {rounds.length}r{rounds.at(-1)?.converged ? " · converged" : ""}
+              </span>
+            )}
           </span>
-        )}
-      </div>
+        </>
+      }
+    >
+      {state.memory && <MemoryBlock memory={state.memory} />}
 
-      {/* conversation */}
-      <div ref={bodyRef} className="flex max-h-[65vh] min-h-[22rem] flex-col gap-3 overflow-y-auto bg-muted/20 p-4">
-        {state.memory && <MemoryNote memory={state.memory} />}
+      {rounds.length === 0 && state.running && (
+        <Line marker="·" className="animate-pulse text-muted-foreground">
+          {state.status || "gathering evidence…"}
+        </Line>
+      )}
 
-        {state.rounds.length === 0 && state.running && (
-          <p className="mx-auto animate-pulse text-xs text-muted-foreground">
-            {state.status || "gathering evidence…"}
-          </p>
-        )}
+      {rounds.map((r) => (
+        <Fragment key={r.round}>
+          <Command>{r.round === 1 ? "open --statements" : `rebut --round ${r.round}`}</Command>
+          <Turn side="bull" arg={r.bull} opening={r.round === 1} />
+          <Turn side="bear" arg={r.bear} opening={r.round === 1} />
+        </Fragment>
+      ))}
 
-        {state.rounds.map((r) => (
-          <div key={r.round} className="flex flex-col gap-3">
-            <RoundDivider round={r.round} />
-            <MessageGroup side="bull" arg={r.bull} isOpening={r.round === 1} />
-            <MessageGroup side="bear" arg={r.bear} isOpening={r.round === 1} />
-          </div>
-        ))}
+      {waiting && (
+        <Line marker="·" className="animate-pulse text-muted-foreground">
+          committee deliberating…
+        </Line>
+      )}
 
-        {waitingForNextRound && (
-          <div className="flex flex-col gap-3">
-            <div className="flex gap-2">
-              <Avatar side="bull" />
-              <div className="w-fit bg-positive/10 px-3 py-2">
-                <TypingDots side="bull" />
-              </div>
-            </div>
-            <div className="flex flex-row-reverse gap-2">
-              <Avatar side="bear" />
-              <div className="w-fit bg-negative/10 px-3 py-2">
-                <TypingDots side="bear" />
-              </div>
-            </div>
-          </div>
-        )}
+      {state.decision && <VerdictBlock decision={state.decision} model={state.model} />}
 
-        {state.decision && <Verdict decision={state.decision} model={state.model} />}
-
-        {state.error && (
-          <div className="mx-auto max-w-md bg-negative/10 px-3 py-2 text-center text-xs text-negative">
-            {state.error}
-          </div>
-        )}
-      </div>
-    </div>
+      {state.error && (
+        <Line marker="!" tone="bear">
+          {state.error}
+        </Line>
+      )}
+    </Terminal>
   );
 }
