@@ -1,13 +1,6 @@
 "use client";
 
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import { createContext, useCallback, useContext, useEffect, useState, useSyncExternalStore } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import * as api from "@/lib/api";
@@ -32,17 +25,12 @@ export function useAuth(): AuthContextValue {
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  // The token lives outside React (the axios interceptor writes to it), so read it
-  // as an external store rather than mirroring it into state. This also means an
-  // interceptor-driven logout re-renders the tree without any extra plumbing.
-  // The server snapshot is null so prerendering agrees with the pre-hydration DOM.
+  // The token lives outside React, so read it as an external store rather than mirroring it.
   const token = useSyncExternalStore(onTokenChange, getToken, () => null);
   const [user, setUser] = useState<api.AuthUser | null>(null);
   const queryClient = useQueryClient();
 
-  // Having a token isn't the same as it working: until /auth/me confirms it we're
-  // still deciding, which is what keeps the app frame from flashing for a user
-  // whose session expired while the tab was closed.
+  // Holding a token is not the same as it working, and the shell must not flash before /auth/me answers.
   const status: Status = !token ? "anonymous" : user ? "authenticated" : "loading";
 
   useEffect(() => {
@@ -55,8 +43,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (!cancelled) setUser(me);
       })
       .catch(() => {
-        // The 401 interceptor already dropped the token; this covers the rest
-        // (network failure, a 500). Either way the credential is unusable.
+        // The 401 interceptor already dropped it; this covers network failures and 500s.
         if (!cancelled) clearToken();
       });
 
@@ -65,10 +52,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, [token, user]);
 
-  // Every cached query belongs to whoever was signed in when it was fetched, so
-  // wipe the cache whenever there's no session — otherwise the next account
-  // briefly sees the previous one's portfolio out of cache before a refetch lands.
-  // Covers signOut and the interceptor's mid-session clear alike.
+  // Cached queries belong to whoever was signed in when they were fetched.
   useEffect(() => {
     if (!token) queryClient.clear();
   }, [token, queryClient]);
@@ -99,16 +83,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{
-        // Guard on the token as well: after the interceptor clears it, `user` is
-        // still set until the effect above runs, and a stale identity must never
-        // be readable in that window.
-        user: token ? user : null,
-        status,
-        signIn,
-        signUp,
-        signOut,
-      }}
+      // Guard on the token too: after the interceptor clears it, `user` lingers for one tick.
+      value={{ user: token ? user : null, status, signIn, signUp, signOut }}
     >
       {children}
     </AuthContext.Provider>
