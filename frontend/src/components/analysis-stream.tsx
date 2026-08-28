@@ -22,8 +22,10 @@ import {
   ShieldWarningIcon,
   IdentificationCardIcon,
   BrainIcon,
+  CaretDownIcon,
   type Icon,
 } from "@phosphor-icons/react";
+import { AgentFindings } from "@/components/agent-findings";
 import {
   CommitteeDebate,
   debateReduce,
@@ -43,6 +45,8 @@ export type WorkflowStreamState = {
   ticker: string | null;
   status: string;
   nodes: Record<WorkflowNode, NodeStatus>;
+  // Each agent's own output, kept so the pipeline can show what it actually found.
+  findings: Partial<Record<WorkflowNode, Record<string, unknown>>>;
   routing: Consensus | null;
   debate: DebateState;
   recommendation: Recommendation | null;
@@ -64,6 +68,7 @@ function initial(includeNews: boolean, ticker: string | null): WorkflowStreamSta
       recall: "pending",
       research: "pending",
     },
+    findings: {},
     routing: null,
     debate: { ...initialDebateState },
     recommendation: null,
@@ -81,6 +86,7 @@ function reduceWf(prev: WorkflowStreamState, ev: WorkflowEvent): WorkflowStreamS
         ...prev,
         status: ev.status === "running" ? `Analysing ${ev.node}…` : prev.status,
         nodes: { ...prev.nodes, [ev.node]: ev.status },
+        findings: ev.data ? { ...prev.findings, [ev.node]: ev.data } : prev.findings,
         errors: ev.warnings?.length ? [...prev.errors, ...ev.warnings] : prev.errors,
       };
     case "routing":
@@ -186,6 +192,11 @@ function StatusIcon({ status }: { status: NodeStatus }) {
 
 function Pipeline({ state }: { state: WorkflowStreamState }) {
   const r = state.routing;
+  // One agent's findings at a time, opened by clicking its chip.
+  const [open, setOpen] = useState<WorkflowNode | null>(null);
+  const openStep = STEPS.find((s) => s.key === open);
+  const openData = open ? state.findings[open] : undefined;
+
   return (
     <Card className="gap-3 p-4">
       <div className="flex items-center gap-2">
@@ -199,22 +210,38 @@ function Pipeline({ state }: { state: WorkflowStreamState }) {
       <div className="flex flex-wrap items-center gap-1.5">
         {STEPS.map(({ key, label, icon: Icon }) => {
           const st = state.nodes[key];
+          const hasFindings = Boolean(state.findings[key]);
+          const isOpen = open === key;
           return (
-            <div
+            <button
               key={key}
+              type="button"
+              disabled={!hasFindings}
+              aria-expanded={isOpen}
+              title={hasFindings ? `Show what the ${label.toLowerCase()} agent found` : undefined}
+              onClick={() => setOpen(isOpen ? null : key)}
               className={cn(
                 "flex items-center gap-1.5 px-2.5 py-1 text-[11px] ring-1 ring-inset transition-colors",
-                st === "running"
-                  ? "bg-primary/8 ring-primary/30"
-                  : st === "done"
-                    ? "bg-positive/8 ring-positive/25"
-                    : "ring-border"
+                hasFindings ? "cursor-pointer hover:ring-primary/40" : "cursor-default",
+                isOpen
+                  ? "bg-primary/15 ring-primary/50"
+                  : st === "running"
+                    ? "bg-primary/8 ring-primary/30"
+                    : st === "done"
+                      ? "bg-positive/8 ring-positive/25"
+                      : "ring-border"
               )}
             >
               <Icon size={13} className="text-muted-foreground" />
               <span>{label}</span>
               <StatusIcon status={st} />
-            </div>
+              {hasFindings && (
+                <CaretDownIcon
+                  size={11}
+                  className={cn("text-muted-foreground transition-transform", isOpen && "rotate-180")}
+                />
+              )}
+            </button>
           );
         })}
 
@@ -241,6 +268,16 @@ function Pipeline({ state }: { state: WorkflowStreamState }) {
         )}
       </div>
 
+      {openStep && openData && (
+        <div className="animate-in fade-in slide-in-from-top-1 border-t pt-3 duration-200">
+          <div className="mb-2.5 flex items-center gap-1.5">
+            <openStep.icon size={14} className="text-primary" />
+            <p className="text-xs font-medium">{openStep.label}</p>
+          </div>
+          <AgentFindings node={openStep.key} data={openData} />
+        </div>
+      )}
+
       {r && Object.keys(r.votes).length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {Object.entries(r.votes).map(([sig, vote]) => (
@@ -261,7 +298,8 @@ export function WorkflowStreamView({ state }: { state: WorkflowStreamState }) {
 
   return (
     <div className="space-y-4">
-      <Pipeline state={state} />
+      {/* Keyed so a new run starts with no panel open instead of the last stock's. */}
+      <Pipeline key={state.ticker} state={state} />
 
       {state.error && (
         <div className="bg-negative/10 p-3 text-xs text-negative ring-1 ring-inset ring-negative/25">{state.error}</div>

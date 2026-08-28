@@ -624,6 +624,7 @@ export type WorkflowEvent =
       type: "node";
       node: WorkflowNode;
       status: "running" | "done" | "error";
+      // What the agent found; the findings panel renders this per node.
       data?: Record<string, unknown>;
       warnings?: string[];
     }

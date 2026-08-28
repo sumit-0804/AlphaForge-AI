@@ -78,6 +78,17 @@ export function RiskBadge({ value, className }: { value: string | null | undefin
   );
 }
 
+// Financial health and the fundamental agent's verdict share one STRONG→POOR scale.
+export function HealthBadge({ value, className }: { value: string | null | undefined; className?: string }) {
+  const v = (value ?? "").toUpperCase();
+  const tone: Tone = v === "STRONG" ? "positive" : v === "MODERATE" ? "warn" : v === "WEAK" || v === "POOR" ? "negative" : "muted";
+  return (
+    <Pill tone={tone} className={className}>
+      {v || "UNKNOWN"}
+    </Pill>
+  );
+}
+
 export function UrgencyBadge({ value, className }: { value: string; className?: string }) {
   const v = (value ?? "").toUpperCase();
   const tone: Tone = v === "HIGH" ? "negative" : v === "MEDIUM" ? "warn" : "muted";
