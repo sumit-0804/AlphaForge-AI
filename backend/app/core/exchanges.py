@@ -63,8 +63,10 @@ def currency_for_ticker(ticker: str) -> str:
     return get_exchange(ticker).currency or "USD"
 
 
-def news_query(ticker: str) -> str:
-    # "RELIANCE.NS" -> "RELIANCE NSE stock"  |  "AAPL" -> "AAPL stock"
+def news_query(ticker: str, name: str | None = None) -> str:
+    # A quoted company name matches real coverage; a bare symbol matches chart pages.
+    if name:
+        return f'"{name}" stock'
     base, _ = split_ticker(ticker)
     ex = get_exchange(ticker)
     return " ".join(p for p in (base, ex.code, "stock") if p)

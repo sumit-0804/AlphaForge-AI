@@ -44,7 +44,10 @@ class Settings(BaseSettings):
     quota_reset_timezone: str = "America/Los_Angeles"
 
     news_lang: str = "en"
+    # Only a fallback: a ticker's own exchange country wins over this.
     news_country: str = ""
+    # Sentiment is about now, so headlines older than this are not evidence.
+    news_days: int = 7
     base_currency: str = "INR"
     forex_api_url: str = "https://api.frankfurter.dev/v1/latest"
     forex_cache_ttl: int = 3600  

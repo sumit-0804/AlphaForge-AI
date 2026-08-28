@@ -1,5 +1,7 @@
 import json
 import asyncio
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from urllib.parse import quote_plus
 
 import feedparser
@@ -9,12 +11,14 @@ from app.agents.schemas import NewsAnalysis
 from app.services.llm_service import LLMService
 from app.core.config import settings
 from app.core.exchanges import news_query, news_country
+from app.services.market_data import MarketDataService
 
 
 def _rss_url(query: str, country: str) -> str:
-    # Use the configured edition, else the ticker's exchange, else the global one.
+    # The ticker's own exchange wins; the setting is only a fallback. Reversing these
+    # sent every Indian query to the US edition, which returned months-old coverage.
     url = f"https://news.google.com/rss/search?q={quote_plus(query)}&hl={settings.news_lang}"
-    gl = settings.news_country or country
+    gl = country or settings.news_country
     if gl:
         url += f"&gl={gl}&ceid={gl}:{settings.news_lang}"
     return url
@@ -31,10 +35,36 @@ class NewsAgentService:
     # Fetch RSS headlines, then summarise and score sentiment via the LLM.
 
     @staticmethod
-    def _fetch_rss_sync(ticker: str, limit: int) -> list[dict]:
-        feed = feedparser.parse(_rss_url(news_query(ticker), news_country(ticker)))
+    def _company_name(ticker: str) -> str | None:
+        # Cached alongside the profile node's own lookup, so this costs nothing.
+        try:
+            info = MarketDataService.get_stock_info(ticker)
+        except Exception:
+            return None
+        return info.get("longName") or info.get("shortName")
+
+    @staticmethod
+    def _is_recent(published: str | None, days: int) -> bool:
+        # Google mostly honours when:, but drop anything older that slips through.
+        if not published:
+            return True
+        try:
+            age = datetime.now(timezone.utc) - parsedate_to_datetime(published)
+        except Exception:
+            return True
+        return age <= timedelta(days=days)
+
+    @classmethod
+    def _fetch_rss_sync(cls, ticker: str, limit: int) -> list[dict]:
+        days = max(1, settings.news_days)
+        query = f"{news_query(ticker, cls._company_name(ticker))} when:{days}d"
+        feed = feedparser.parse(_rss_url(query, news_country(ticker)))
         articles = []
-        for entry in feed.entries[:limit]:
+        for entry in feed.entries:
+            if len(articles) >= limit:
+                break
+            if not cls._is_recent(entry.get("published"), days):
+                continue
             source = entry.get("source")
             articles.append(
                 {
