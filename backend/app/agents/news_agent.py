@@ -55,13 +55,19 @@ class NewsAgentService:
 
     @staticmethod
     def _subject_terms(ticker: str, name: str | None) -> list[str]:
+        # Without a name there is no usable term: TATAMOTORS never matches "Tata Motors".
+        if not name:
+            return []
         # The symbol plus the distinctive words of the name, minus corporate suffixes.
         base = split_ticker(ticker)[0].lower()
-        words = re.findall(r"[a-z]+", (name or "").lower())
+        words = re.findall(r"[a-z]+", name.lower())
         return [base] + [w for w in words if w not in _NAME_NOISE and len(w) > 2]
 
     @staticmethod
     def _is_about(title: str | None, terms: list[str]) -> bool:
+        # No terms means no reliable filter, so pass everything and let the model judge.
+        if not terms:
+            return True
         # Roundups ("8 stocks that hit upper circuit") name many tickers and say nothing
         # about any of them; scoring sentiment on those is worse than having no news.
         low = (title or "").lower()
