@@ -65,9 +65,12 @@ def currency_for_ticker(ticker: str) -> str:
 
 def news_query(ticker: str, name: str | None = None) -> str:
     # A quoted company name matches real coverage; a bare symbol matches chart pages.
-    if name:
-        return f'"{name}" stock'
     base, _ = split_ticker(ticker)
+    if name:
+        # The press writes "Paytm", never "One97 Communications Limited", so accept either.
+        if len(base) >= 4 and base.lower() not in name.lower():
+            return f'("{name}" OR {base}) stock'
+        return f'"{name}" stock'
     ex = get_exchange(ticker)
     return " ".join(p for p in (base, ex.code, "stock") if p)
 
