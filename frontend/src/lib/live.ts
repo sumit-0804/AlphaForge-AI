@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+
 import { API_URL } from "@/lib/api";
 import { getToken } from "@/lib/auth";
 
-/** One live trade, already merged into today's candle by the server. */
+/** One live trade, already folded into today's candle by the server. */
 export type Tick = {
   type: "tick";
   symbol: string;
@@ -28,13 +29,12 @@ type Subscribed = {
 };
 
 function socketUrl(): string {
-  const base = API_URL.replace(/^http/, "ws");
-  return `${base}/api/live`;
+  return `${API_URL.replace(/^http/, "ws")}/api/live`;
 }
 
-/** Live prices for one ticker; reconnects, since Cloud Run cuts sockets at 60 min. */
+/** Live prices for one ticker; it reconnects, since Cloud Run cuts sockets at 60 minutes. */
 export function useLivePrice(ticker: string | null) {
-  // Stamped with its ticker so a stale symbol is filtered on read, not reset in an effect.
+  // Stamped with its ticker so a stale symbol is filtered on read rather than reset in an effect.
   const [state, setState] = useState<{
     ticker: string | null;
     tick: Tick | null;
@@ -55,7 +55,7 @@ export function useLivePrice(ticker: string | null) {
       const token = getToken();
       if (!token) return;
 
-      // No headers on a WebSocket, so the token rides in the subprotocol, not the URL.
+      // A WebSocket takes no headers, so the token rides in the subprotocol rather than the URL.
       const ws = new WebSocket(socketUrl(), ["bearer", token]);
       wsRef.current = ws;
 
@@ -69,7 +69,7 @@ export function useLivePrice(ticker: string | null) {
         if (msg.type === "tick") {
           setState({ ticker, tick: msg, status: "live" });
         } else if (msg.type === "subscribed") {
-          // Silence is normal out of hours; say so rather than sitting on "connecting".
+          // Silence out of hours is normal, so say so rather than sitting on "connecting".
           setState((s) => ({
             ticker,
             tick: s.ticker === ticker ? s.tick : null,

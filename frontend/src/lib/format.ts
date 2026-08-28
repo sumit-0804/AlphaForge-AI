@@ -1,83 +1,100 @@
-/* ---------- money ----------
- * Every amount belongs to a currency, so `code` is required at the call site —
- * a defaulted "USD" is what let ₹ positions render as dollars.
- */
+const SYMBOL: Record<string, string> = { INR: "\u20b9", USD: "$", EUR: "\u20ac", GBP: "\u00a3" };
 
-// INR reads naturally with lakh/crore grouping (₹1,23,456); others keep en-US.
-const localeFor = (code: string) => (code === "INR" ? "en-IN" : "en-US");
+export function currencySymbol(code?: string | null): string {
+  if (!code) return "";
+  return SYMBOL[code] ?? `${code} `;
+}
 
-export const currency = (n: number | null | undefined, code: string) => {
-  if (n == null) return "—";
-  if (!code) return number(n);
-  try {
-    return n.toLocaleString(localeFor(code), { style: "currency", currency: code });
-  } catch {
-    // Unknown/non-ISO code — show the number with the code appended, don't throw.
-    return `${number(n)} ${code}`;
+// Indian listings are quoted in lakhs and crores, so let the locale decide the grouping.
+function localeFor(code?: string | null): string {
+  return code === "INR" ? "en-IN" : "en-US";
+}
+
+// Paise on a five-figure total is noise, so decimals only survive while they still carry meaning.
+function decimalsFor(value: number): number {
+  return Math.abs(value) >= 1000 ? 0 : 2;
+}
+
+export function money(value: number | null | undefined, code?: string | null, decimals?: number): string {
+  if (value == null || !Number.isFinite(value)) return "\u2014";
+  const places = decimals ?? decimalsFor(value);
+  const n = value.toLocaleString(localeFor(code), {
+    minimumFractionDigits: places,
+    maximumFractionDigits: places,
+  });
+  return `${currencySymbol(code)}${n}`;
+}
+
+export function signedMoney(value: number | null | undefined, code?: string | null): string {
+  if (value == null || !Number.isFinite(value)) return "\u2014";
+  return `${value < 0 ? "\u2212" : "+"}${money(Math.abs(value), code)}`;
+}
+
+export function percent(value: number | null | undefined, decimals = 1): string {
+  if (value == null || !Number.isFinite(value)) return "\u2014";
+  return `${value.toFixed(decimals)}%`;
+}
+
+export function signedPercent(value: number | null | undefined, decimals = 1): string {
+  if (value == null || !Number.isFinite(value)) return "\u2014";
+  return `${value < 0 ? "\u2212" : "+"}${Math.abs(value).toFixed(decimals)}%`;
+}
+
+export function num(value: number | null | undefined, decimals = 0): string {
+  if (value == null || !Number.isFinite(value)) return "\u2014";
+  return value.toLocaleString("en-US", {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+}
+
+export function compact(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "\u2014";
+  return Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(value);
+}
+
+const UNITS: [number, Intl.RelativeTimeFormatUnit][] = [
+  [60, "second"],
+  [3600, "minute"],
+  [86400, "hour"],
+  [604800, "day"],
+];
+
+export function ago(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "";
+  const secs = (Date.now() - then) / 1000;
+  if (secs < 45) return "just now";
+  const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+  for (let i = 0; i < UNITS.length; i++) {
+    const [limit, unit] = UNITS[i];
+    if (secs < limit) {
+      const divisor = i === 0 ? 1 : UNITS[i - 1][0];
+      return rtf.format(-Math.round(secs / divisor), unit);
+    }
   }
-};
-
-export const number = (n: number | null | undefined) =>
-  n == null ? "—" : n.toLocaleString("en-US");
-
-export const percent = (n: number | null | undefined) =>
-  n == null ? "—" : `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
-
-export const compact = (n: number | null | undefined, code?: string) => {
-  if (n == null) return "—";
-  return Intl.NumberFormat(code ? localeFor(code) : "en-US", {
-    notation: "compact",
-    ...(code ? { style: "currency", currency: code } : {}),
-  }).format(n);
-};
-
-// Green for gains, red for losses — the semantic money colours, not the brand accent.
-export const pnlClass = (n: number | null | undefined) =>
-  n == null || n === 0 ? "text-muted-foreground" : n > 0 ? "text-positive" : "text-negative";
-
-/* ---------- time ----------
- * The API sends UTC instants with an explicit offset, so `new Date(iso)` resolves
- * them unambiguously and toLocale* renders in the viewer's own timezone.
- */
-
-/** The viewer's IANA timezone, e.g. "Asia/Calcutta". */
-export const localTimeZone = (): string =>
-  Intl.DateTimeFormat().resolvedOptions().timeZone ?? "local";
-
-/** The viewer's current UTC offset, e.g. "+05:30". */
-export function localOffset(at: Date = new Date()): string {
-  // getTimezoneOffset is minutes BEHIND UTC, so invert the sign.
-  const mins = -at.getTimezoneOffset();
-  const sign = mins < 0 ? "-" : "+";
-  const abs = Math.abs(mins);
-  return `${sign}${String(Math.floor(abs / 60)).padStart(2, "0")}:${String(abs % 60).padStart(2, "0")}`;
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-/** "Asia/Calcutta (+05:30)" — for labelling a column of timestamps. */
-export const localTimeZoneLabel = (): string => `${localTimeZone()} (${localOffset()})`;
-
-export function dateTime(iso: string | null | undefined): string {
-  if (!iso) return "—";
+export function dayAndTime(iso: string | null | undefined): string {
+  if (!iso) return "";
   const d = new Date(iso);
-  return isNaN(d.getTime()) ? "—" : d.toLocaleString();
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
 }
 
-export function timeOnly(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  return isNaN(d.getTime())
-    ? "—"
-    : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+// Sentence-case a backend enum without touching acronyms the agents emit as words.
+export function sentence(value: string | null | undefined): string {
+  if (!value) return "";
+  return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
 }
 
-/** Renders an instant in a SPECIFIC market's timezone, e.g. NSE local time. */
-export function inTimeZone(iso: string | null | undefined, timeZone: string): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "—";
-  try {
-    return d.toLocaleString([], { timeZone, hour: "2-digit", minute: "2-digit" });
-  } catch {
-    return d.toLocaleString();
-  }
+export function tickerName(symbol: string): string {
+  return symbol.replace(/\.(NS|BO)$/i, "");
 }
