@@ -625,7 +625,7 @@ export type WorkflowEvent =
       node: WorkflowNode;
       status: "running" | "done" | "error";
       data?: Record<string, unknown>;
-      error?: string[];
+      warnings?: string[];
     }
   | { type: "routing"; consensus: Consensus }
   | { type: "quick_decision"; decision: DebateDecision; memory: DebateMemory }

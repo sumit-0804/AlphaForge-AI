@@ -81,7 +81,7 @@ function reduceWf(prev: WorkflowStreamState, ev: WorkflowEvent): WorkflowStreamS
         ...prev,
         status: ev.status === "running" ? `Analysing ${ev.node}…` : prev.status,
         nodes: { ...prev.nodes, [ev.node]: ev.status },
-        errors: ev.error ? [...prev.errors, ...ev.error] : prev.errors,
+        errors: ev.warnings?.length ? [...prev.errors, ...ev.warnings] : prev.errors,
       };
     case "routing":
       return {
