@@ -1,0 +1,44 @@
+---
+config:
+  flowchart:
+    curve: basis
+---
+graph TB
+    %% Hand-authored. Shared shape for the structured-output agents:
+    %% research_agent, fundamental_agent, news_agent, risk_agent, portfolio_agent.
+    %% Loop source: LLMService.chat_json in app/services/llm_service.py
+
+    IN(["pre-computed evidence<br/><i>profile · metrics · headlines ·<br/>risk · memory · allocation plan</i>"])
+    IN --> LIM["RateLimiter<br/><i>wait on RPM/TPM ·<br/>429 when the day is spent</i>"]
+    LIM --> CALL["Gemini call<br/><i>json_schema structured output ·<br/>temperature 0.1</i>"]
+    CALL --> PARSE{"parses into the<br/>pydantic schema?"}
+    PARSE -->|"no"| FIX
+    PARSE -->|"yes"| SEM{"passes semantic<br/>validator?"}
+    SEM -->|"no"| FIX["re-prompt with the rejected<br/>output + what was wrong"]
+    SEM -->|"yes"| OK(["structured result<br/>valid: true"])
+
+    FIX --> RETRY{"retries left?<br/><i>max 2</i>"}
+    RETRY -->|"yes"| LIM
+    RETRY -->|"no"| FB(["agent's fallback object<br/>valid: false"])
+
+    subgraph USERS["Agents using this shape"]
+        direction LR
+        N0["research<br/><i>workflow · BUY/HOLD/SELL view</i>"]
+        N1["fundamental<br/><i>workflow · verdict</i>"]
+        N2["news<br/><i>workflow · skipped with<br/>no headlines</i>"]
+        N3["risk<br/><i>daily report</i>"]
+        N4["portfolio<br/><i>daily report</i>"]
+    end
+
+    classDef io fill:#dbeafe,stroke:#2563eb,color:#172554
+    classDef step fill:#fef3c7,stroke:#d97706,color:#451a03
+    classDef dec fill:#fed7aa,stroke:#ea580c,color:#431407
+    classDef bad fill:#fee2e2,stroke:#dc2626,color:#450a0a
+    classDef good fill:#dcfce7,stroke:#16a34a,color:#052e16
+
+    class IN io
+    class LIM,CALL,FIX step
+    class PARSE,SEM,RETRY dec
+    class FB bad
+    class OK good
+    class N0,N1,N2,N3,N4 good

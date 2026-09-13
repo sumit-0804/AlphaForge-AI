@@ -1,9 +1,9 @@
 """Triage agent — turns raw scanner hits into a ranked, explained shortlist.
 
 Deliberately ONE LLM call for the entire candidate list rather than one per
-candidate. Running the full workflow graph over a 16-name universe would cost
-roughly 300 model calls, which at the shared 10 req/min limiter is ~25 minutes
-for a single scan. This pass is the cheap middle tier: it reads the whole set at
+candidate. Running the full workflow graph over a 50-name universe would cost
+up to ~400 model calls, which at the shared GEMINI_RPM limiter (12 by default)
+is over half an hour and the whole day's quota for a single scan. This pass is the cheap middle tier: it reads the whole set at
 once, ranks it, and says why — so the user can decide which one or two names
 actually deserve the expensive per-ticker analysis.
 """

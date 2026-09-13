@@ -5,31 +5,37 @@ config:
 ---
 graph TD;
 	__start__([<p>__start__</p>]):::first
-	research(research)
+	profile(profile)
 	technical(technical)
 	fundamental(fundamental)
 	news(news)
 	risk(risk)
+	recall(recall)
+	research(research)
 	gate(gate)
 	debate(debate)
 	quick_decision(quick_decision)
 	recommendation(recommendation)
+	persist(persist)
 	__end__([<p>__end__</p>]):::last
 	__start__ --> fundamental;
 	__start__ --> news;
-	__start__ --> research;
+	__start__ --> profile;
 	__start__ --> risk;
 	__start__ --> technical;
 	debate --> recommendation;
-	fundamental --> gate;
+	fundamental --> recall;
 	gate -.-> debate;
 	gate -.-> quick_decision;
-	news --> gate;
+	news --> recall;
+	profile --> recall;
 	quick_decision --> recommendation;
+	recall --> research;
+	recommendation --> persist;
 	research --> gate;
-	risk --> gate;
-	technical --> gate;
-	recommendation --> __end__;
+	risk --> recall;
+	technical --> recall;
+	persist --> __end__;
 	classDef default fill:#f2f0ff,line-height:1.2
 	classDef first fill-opacity:0
 	classDef last fill:#bfb6fc

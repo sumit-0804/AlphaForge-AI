@@ -1,0 +1,49 @@
+---
+config:
+  flowchart:
+    curve: basis
+---
+graph TB
+    %% Hand-authored. Source: recall_node in app/graph/workflow.py
+    %% + DebateAgentService.recall_memory / _lesson_status in app/agents/debate_agent.py
+
+    IN(["recall node<br/><i>runs after all 5 gather nodes</i>"])
+    IN --> Q1["same-ticker lessons<br/><i>$vectorSearch · type lesson ·<br/>ticker filter · k=3</i>"]
+    IN --> SIT["build situation query<br/><i>sector · EMA trend · RSI ·<br/>MACD · ADX · financial health</i>"]
+    SIT --> Q2["cross-ticker lessons<br/><i>$vectorSearch · type lesson ·<br/>no ticker filter</i>"]
+    Q2 --> DROP["drop this ticker + duplicates<br/>keep at most 3"]
+    IN --> Q3["past recommendations<br/><i>last 3 for this ticker</i>"]
+
+    Q1 --> ANY{"anything<br/>recalled?"}
+    DROP --> ANY
+    ANY -->|"yes"| OK["status: ok"]
+    ANY -->|"no"| CNT{"any lessons<br/>stored in Mongo?"}
+    CNT -->|"no"| NL["status: no_lessons_yet<br/><i>normal on a fresh account</i>"]
+    CNT -->|"yes"| IDX{"vector index<br/>answers a probe?"}
+    IDX -->|"yes"| DEG["status: index_degraded"]
+    IDX -->|"no"| UN["status: index_unavailable"]
+
+    OK --> OUT
+    NL --> OUT
+    DEG --> OUT
+    UN --> OUT
+    Q3 --> OUT(["state.memory<br/>prior_lessons · cross_ticker_lessons<br/>past_recommendations · status"])
+
+    OUT --> USE(["research prompt · debate moderator ·<br/>explanation.learned_context"])
+
+    NOTE["Cross-ticker hits stay in their own list so the<br/>moderator never reads another company's<br/>blow-up as this one's history"]
+    DROP -.- NOTE
+
+    classDef io fill:#dbeafe,stroke:#2563eb,color:#172554
+    classDef step fill:#fef3c7,stroke:#d97706,color:#451a03
+    classDef dec fill:#fed7aa,stroke:#ea580c,color:#431407
+    classDef good fill:#dcfce7,stroke:#16a34a,color:#052e16
+    classDef bad fill:#fee2e2,stroke:#dc2626,color:#450a0a
+    classDef note fill:#f1f5f9,stroke:#64748b,color:#0f172a
+
+    class IN,OUT,USE io
+    class Q1,Q2,Q3,SIT,DROP step
+    class ANY,CNT,IDX dec
+    class OK,NL good
+    class DEG,UN bad
+    class NOTE note

@@ -5,30 +5,36 @@ config:
 ---
 graph TB
     %% Hand-authored. Source: app/agents/reflection_agent.py
-    %% Triggered from TradingService.execute_trade on a SELL.
+    %% Triggered from TradingService.execute_trade on a SELL, awaited in request scope.
 
-    SELL(["paper trade closed<br/><i>SELL</i>"]) --> BG["fire-and-forget<br/>background task"]
-    BG --> PNL["compute realised P&L<br/>absolute + percent"]
-    PNL --> PRIOR["recall prior lessons<br/>for this ticker"]
-    PRIOR --> CALL["LLM call<br/><i>bare chat, no retry loop</i>"]
-    CALL --> PARSE["_parse<br/><i>fallback if unstructured</i>"]
-    PARSE --> LESSON(["one reusable lesson"])
-    LESSON --> SAVE["MemoryService.save<br/>type: lesson"]
-    SAVE --> MONGO[("MongoDB")]
-    SAVE --> FAISS[("FAISS")]
+    SELL(["paper trade closed<br/><i>POST /trading/execute · SELL</i>"]) --> AW["awaited inside the request<br/><i>not a detached task — Cloud Run<br/>throttles CPU after the response</i>"]
+    AW --> PNL["compute realised P&L<br/>absolute + percent"]
+    PNL --> PRIOR["recall prior lessons<br/>for this ticker · k=3"]
+    PRIOR --> CALL["chat_json · Reflection schema<br/><i>max 2 repair retries</i>"]
+    CALL --> VAL{"valid<br/>reflection?"}
+    VAL -->|"no"| NONE(["store nothing<br/><i>outcome still derived from P&L</i>"])
+    VAL -->|"yes"| SAVE["MemoryService.save<br/>type: lesson"]
+    SAVE --> EMB["Gemini embedding<br/><i>gemini-embedding-2 · 1536 dims</i>"]
+    EMB --> MEM[("memories<br/><i>text + vector on one document</i>")]
+    EMB -.->|"embedding failed"| ERR["saved anyway with<br/>metadata._index_error"]
+    ERR --> MEM
 
-    FAISS -.->|"recalled by"| PRIOR
-    FAISS ==>|"injected into every future<br/>moderator prompt for this ticker"| DEB(["debate committee"])
+    MEM -.->|"$vectorSearch"| PRIOR
+    MEM ==>|"same-ticker and cross-ticker<br/>lessons, via the recall node"| WF(["every future workflow run<br/>research · debate moderator"])
 
-    GAP["This is the one agent still on bare chat +<br/>_parse rather than the self-correcting<br/>chat_json path — an unstructured reply here<br/>becomes a permanent prior on this ticker"]
-    CALL -.- GAP
+    NOTE["Why invalid output is dropped: a lesson is<br/>permanent and gets replayed into later<br/>debates, including on other tickers"]
+    VAL -.- NOTE
 
     classDef io fill:#dbeafe,stroke:#2563eb,color:#172554
     classDef step fill:#fef3c7,stroke:#d97706,color:#451a03
+    classDef dec fill:#fed7aa,stroke:#ea580c,color:#431407
     classDef store fill:#fae8ff,stroke:#a21caf,color:#4a044e
-    classDef warn fill:#fee2e2,stroke:#dc2626,color:#450a0a
+    classDef bad fill:#fee2e2,stroke:#dc2626,color:#450a0a
+    classDef note fill:#f1f5f9,stroke:#64748b,color:#0f172a
 
-    class SELL,LESSON,DEB io
-    class BG,PNL,PRIOR,CALL,PARSE,SAVE step
-    class MONGO,FAISS store
-    class GAP warn
+    class SELL,WF io
+    class AW,PNL,PRIOR,CALL,SAVE,EMB step
+    class VAL dec
+    class MEM store
+    class NONE,ERR bad
+    class NOTE note

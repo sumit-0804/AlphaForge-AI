@@ -26,11 +26,11 @@ if str(BACKEND) not in sys.path:
 # from code, so they can drift — update system.mmd when the architecture changes.
 HAND_AUTHORED = (
     "system",
-    "agent-research",
+    "agent-structured",
     "agent-scanner",
     "agent-advisor",
     "agent-reflection",
-    "agent-narrators",
+    "agent-recall",
 )
 
 
@@ -58,12 +58,13 @@ def render_via_mermaid_ink(mermaid_syntax: str) -> bytes:
 
 def main() -> int:
     from app.agents.debate_agent import _debate_graph
-    from app.graph.workflow import workflow
+    from app.graph.workflow import build_workflow
 
     mmd_only = "--mmd-only" in sys.argv
 
     # Generated from the compiled graphs — these cannot drift from the code.
-    for name, compiled in (("mermaid", workflow), ("debate-subgraph", _debate_graph)):
+    # The shape doesn't depend on the checkpointer, so compile without one.
+    for name, compiled in (("mermaid", build_workflow()), ("debate-subgraph", _debate_graph)):
         graph = compiled.get_graph()
         (DOCS / f"{name}.mmd").write_text(graph.draw_mermaid(), encoding="utf-8")
         print(f"wrote {name}.mmd")

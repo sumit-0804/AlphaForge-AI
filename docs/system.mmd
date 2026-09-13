@@ -3,63 +3,62 @@ config:
   flowchart:
     curve: basis
 ---
-graph TB
+graph LR
     %% Hand-authored — NOT generated from code. Update when architecture changes.
     %% Organised by what TRIGGERS each agent, since that is the thing the
     %% per-graph diagrams cannot show. Graph internals live in mermaid.png.
 
-    subgraph TRIG["Triggers"]
-        direction LR
-        T1["User · Scanner page"]
-        T2["User · Deep analysis"]
-        T3["User · Buy / Sell"]
-        T4["User · Daily report<br/><i>on demand</i>"]
-    end
-
-    subgraph LLM["LLM agents"]
-        direction LR
-        A1["Scanner triage<br/><i>1 call per scan</i>"]
-        A2["Portfolio advisor<br/><i>1 call per book</i>"]
-        A3["Reflection<br/><i>on closed trade</i>"]
-        A4["Risk + allocation<br/>narration<br/><i>2 calls per report</i>"]
-        WF["LangGraph workflow<br/><i>~15 calls per ticker</i><br/>research · technical · fundamental<br/>news · risk · gate · debate"]
+    subgraph TRIG["Triggers · all user-initiated"]
+        T1["Ideas · Scan<br/><i>GET /scanner</i>"]
+        T2["Stock page · Analyse<br/><i>SSE /workflow/{t}/stream</i>"]
+        T3["Buy / Sell<br/><i>POST /trading/execute</i>"]
+        T4["Book · Ask advisor<br/><i>GET /advisor/suggestions</i>"]
+        T5["Daily report<br/><i>POST /reports/daily</i>"]
+        T6["Stock page · live price<br/><i>WS /live</i>"]
     end
 
     subgraph DET["Deterministic core · no LLM"]
-        direction LR
-        S1["MarketScanner<br/>entry + exit signals"]
-        S2["Indicators ·<br/>Fundamentals · Risk"]
-        S3["Trading ·<br/>Allocation"]
+        S1["MarketScanner<br/>discovery · entry + exit signals"]
+        S2["Indicators · Fundamentals<br/>Risk · Allocation"]
+        S3["Trading · Forex"]
+        S4["Live price hub"]
     end
 
-    subgraph STORE["Persistence"]
-        direction LR
-        D1[("MongoDB")]
-        D2[("FAISS<br/>vector memory")]
+    subgraph LLM["LLM agents · Gemini via chat_json · RateLimiter"]
+        A1["Scanner triage<br/><i>1 call per scan</i>"]
+        WF["LangGraph workflow<br/><i>3 calls quick · 8 calls debate</i>"]
+        A2["Portfolio advisor<br/><i>1 call per book</i>"]
+        A3["Reflection<br/><i>1 call per sell · awaited</i>"]
+        A4["Risk + portfolio narration<br/><i>2 calls per report</i>"]
     end
 
-    EXT["yfinance · Google News RSS · Gemini"]
+    subgraph STORE["MongoDB Atlas"]
+        D1[("portfolios · transactions<br/>recommendations · daily_reports")]
+        D2[("memories<br/><i>Atlas Vector Search</i>")]
+        D3[("checkpoints<br/><i>3-day TTL</i>")]
+    end
+
+    MKT["yfinance REST + WebSocket<br/>Google News RSS · Frankfurter FX"]
 
     T1 --> S1 --> A1
-    T1 --> A2 --> S1
     T2 --> WF
+    WF --> S2
     T3 --> S3
     S3 -->|"on SELL"| A3
-    T4 --> S1
-    T4 --> S2 --> A4
+    T4 --> A2
+    A2 -->|"exit signals"| S1
+    T5 --> S2 --> A4
+    T6 --> S4
 
-    WF --> S2
-    A1 -.->|"user picks a candidate"| WF
-
-    A3 -->|"distilled lesson"| D2
     WF -->|"recommendation"| D1
-    WF -->|"recommendation"| D2
-    D2 -.->|"prior + cross-ticker<br/>lessons recalled"| WF
+    WF -->|"agent_output"| D2
+    WF <-->|"resume"| D3
+    A3 -->|"lesson"| D2
+    D2 -.->|"lessons recalled"| WF
     S3 --> D1
     A4 --> D1
 
-    DET ==> EXT
-    LLM ==> EXT
+    S1 & S2 & S4 ==> MKT
 
     classDef trig fill:#dbeafe,stroke:#2563eb,color:#172554
     classDef agent fill:#fef3c7,stroke:#d97706,color:#451a03
@@ -67,8 +66,8 @@ graph TB
     classDef store fill:#fae8ff,stroke:#a21caf,color:#4a044e
     classDef ext fill:#f1f5f9,stroke:#64748b,color:#0f172a
 
-    class T1,T2,T3,T4 trig
+    class T1,T2,T3,T4,T5,T6 trig
     class A1,A2,A3,A4,WF agent
-    class S1,S2,S3 svc
-    class D1,D2 store
-    class EXT ext
+    class S1,S2,S3,S4 svc
+    class D1,D2,D3 store
+    class MKT ext

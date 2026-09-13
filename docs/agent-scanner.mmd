@@ -7,21 +7,27 @@ graph TB
     %% Hand-authored. Source: app/agents/scanner_agent.py
     %% + app/services/market_scanner.py
 
-    IN(["universe<br/><i>NSE · BSE · US</i>"]) --> RULES["rule scan · no LLM<br/>breakout · volume<br/>EMA cross · RSI recovery"]
-    RULES --> ANY{"any<br/>candidates?"}
-    ANY -->|"none"| EMPTY(["empty shortlist"])
-    ANY -->|"yes"| ONE["ONE LLM call<br/>for the WHOLE list"]
+    IN(["GET /scanner<br/><i>market: ALL · IN · NSE · BSE · US<br/>UI offers ALL · IN · US</i>"]) --> DISC["discovery tier · no LLM<br/>US: day_gainers screen<br/>IN: EquityQuery percentchange &gt; 2<br/><i>dedupe .NS over .BO · 5 min cache</i>"]
+    DISC --> GOT{"screener<br/>returned symbols?"}
+    GOT -->|"yes"| U1["universe_source: discovery"]
+    GOT -->|"empty or error"| U2["universe_source: fallback<br/><i>hardcoded NSE · BSE · US lists</i>"]
+    U1 --> RULES
+    U2 --> RULES["rule scan · no LLM<br/>breakout · high volume<br/>EMA cross · RSI recovery"]
 
-    ONE --> VAL{"covers exactly<br/>the candidates given?"}
+    RULES --> ANY{"any candidates<br/>and triage=true?"}
+    ANY -->|"no"| RAW(["rule-score order"])
+    ANY -->|"yes"| ONE["ONE chat_json call<br/>for the WHOLE list"]
+
+    ONE --> VAL{"ranks exactly<br/>the candidates given?"}
     VAL -->|"symbol missing<br/>or invented"| RETRY["self-correct<br/><i>max 2 retries</i>"]
     RETRY --> ONE
     VAL -->|"yes"| OUT(["ranked shortlist<br/>conviction · thesis<br/>invalidation"])
     RETRY -.->|"retries exhausted"| FB(["rule-score order<br/>valid: false"])
 
-    OUT --> PICK{{"user picks<br/>which to analyse"}}
-    PICK -->|"Deep analysis"| WF(["LangGraph workflow<br/><i>~15 calls, 1 ticker</i>"])
+    OUT --> PICK{{"user opens a candidate's<br/>stock page"}}
+    PICK -->|"Analyse"| WF(["LangGraph workflow<br/><i>3–8 calls, 1 ticker</i>"])
 
-    NOTE["Why one call, not one per name:<br/>the full workflow across 45 names<br/>would be ~700 model calls"]
+    NOTE["Why one call, not one per name:<br/>the workflow across 50 movers would be<br/>up to ~400 calls — the whole day's quota"]
     ONE -.- NOTE
 
     classDef io fill:#dbeafe,stroke:#2563eb,color:#172554
@@ -31,9 +37,9 @@ graph TB
     classDef bad fill:#fee2e2,stroke:#dc2626,color:#450a0a
     classDef note fill:#f1f5f9,stroke:#64748b,color:#0f172a
 
-    class IN,OUT,WF,EMPTY io
-    class RULES good
+    class IN,OUT,WF,RAW io
+    class DISC,RULES,U1 good
     class ONE,RETRY step
-    class ANY,VAL,PICK dec
-    class FB bad
+    class GOT,ANY,VAL,PICK dec
+    class FB,U2 bad
     class NOTE note
